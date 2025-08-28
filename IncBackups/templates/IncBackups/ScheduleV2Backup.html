@@ -120,7 +120,7 @@
                                 <label class="col-sm-3 control-label">{% trans " " %} </label>
                                 <div class="col-sm-6">
                                     <button class="btn" id="CreateV2BackupButton" ng-click="CreateScheduleV2()"
-                                            style="border-radius: 6px;background-color: #3447b7;color: white !important;">
+                                            style="border-radius: 6px;background-color: var(--accent-color, #3447b7);color: var(--bg-secondary, white) !important;">
                                         Create Schedule
                                     </button>
                                 </div>
@@ -224,8 +224,8 @@
         </style>
         <div class="container">
             <div id="page-title" align="center">
-                <h1 style="color: black"><strong>Backups v2 - Incremental Backups! </strong></h1>
-                <p style="font-size: 15px; color: black; margin-top: 1%">Is your website's data protection strategy up
+                <h1 style="color: var(--text-primary, black)"><strong>Backups v2 - Incremental Backups! </strong></h1>
+                <p style="font-size: 15px; color: var(--text-primary, black); margin-top: 1%">Is your website's data protection strategy up
                     to par? Are you tired of dealing with slow and unreliable backup solutions that don't offer the
                     level of robustness you need? <br><br>
 
@@ -251,14 +251,8 @@
                         allowfullscreen></iframe>
             </p>
             <div style="margin-top: 2%">
-                <stripe-pricing-table pricing-table-id="prctbl_1MQtdYJMfY1fWGMszc4tx78j"
-                                      publishable-key="pk_live_51ITXBmJMfY1fWGMs2G0LAydJweIDMp2WaYocM0xyzdn03WaHUbMw6uxfVuktAkgpRyUql7tz7gF5OwdccEZLd6Ot00XX6tGoZx">
-                </stripe-pricing-table>
-                <stripe-pricing-table pricing-table-id="prctbl_1LpSqSJMfY1fWGMsxSNhPLsc"
-                                      publishable-key="pk_live_51ITXBmJMfY1fWGMs2G0LAydJweIDMp2WaYocM0xyzdn03WaHUbMw6uxfVuktAkgpRyUql7tz7gF5OwdccEZLd6Ot00XX6tGoZx">
-                </stripe-pricing-table>
-                <stripe-pricing-table pricing-table-id="prctbl_1M6WpCJMfY1fWGMsQXFlZWcW"
-                                      publishable-key="pk_live_51ITXBmJMfY1fWGMs2G0LAydJweIDMp2WaYocM0xyzdn03WaHUbMw6uxfVuktAkgpRyUql7tz7gF5OwdccEZLd6Ot00XX6tGoZx">
+                <stripe-pricing-table pricing-table-id="prctbl_1PhTRPRs6rG0dTDlJZMzTw0k"
+                                      publishable-key="pk_live_51PgodkRs6rG0dTDl3jCUgxjyjI983GmCdHjzuLfZIsssmDLgKgnXnwQghVCctKMNFIC5K4oMcviTFrHf1ytsYZGa00AGySiWlF">
                 </stripe-pricing-table>
             </div>
 

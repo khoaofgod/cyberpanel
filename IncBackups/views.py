@@ -747,6 +747,8 @@ def ConfigureV2BackupSetup(request):
         req_data['token_uri'] = request.GET.get('to')
         req_data['scopes'] = request.GET.get('s')
         req_data['accountname'] = request.GET.get('n')
+        req_data['client_id'] = request.GET.get('client_id')
+        req_data['client_secret'] = request.GET.get('client_secret')
         website = request.GET.get('d')
 
         # logging.writeToFile('domainname is ====%s'%(request.GET.get))
@@ -764,13 +766,25 @@ def ConfigureV2BackupSetup(request):
             {'domain': website, 'BasePath': '/home/backup', 'BackupDatabase': 1, 'BackupData': 1,
              'BackupEmails': 1, 'BackendName': 'testremote'})
 
-        cpbuv2.SetupRcloneBackend(CPBackupsV2.GDrive, req_data)
+        status, message = cpbuv2.SetupRcloneBackend(CPBackupsV2.GDrive, req_data)
+        from plogical.processUtilities import ProcessUtilities
+
+        if os.path.exists(ProcessUtilities.debugPath):
+            logging.writeToFile(f'Response from SetupRcloneBackend is {str(status)} and message {str(message)}')
+
+        if status == 0:
+            data_ret = {'status': 0, 'error_message': message}
+            json_data = json.dumps(data_ret)
+            return HttpResponse(json_data)
+
 
         return ConfigureV2Backup(request)
 
     except BaseException as msg:
         logging.writeToFile("Error configure"+str(msg))
-        return redirect(loadLoginPage)
+        data_ret = {'status': 0, 'error_message': str(msg) + request.get_raw_uri() }
+        json_data = json.dumps(data_ret)
+        return HttpResponse(json_data)
 
 def CreateV2Backup(request):
     try:
@@ -1012,7 +1026,17 @@ def ConfigureSftpV2Backup(request):
             {'domain': Selectedwebsite, 'BasePath': '/home/backup', 'BackupDatabase': 1, 'BackupData': 1,
              'BackupEmails': 1, 'BackendName': 'SFTP', 'function': None})
 
-        cpbuv2.SetupRcloneBackend(CPBackupsV2.SFTP, req_data)
+        status, message = cpbuv2.SetupRcloneBackend(CPBackupsV2.SFTP, req_data)
+
+        from plogical.processUtilities import ProcessUtilities
+
+        if os.path.exists(ProcessUtilities.debugPath):
+            logging.writeToFile(f'Response from SetupRcloneBackend is {str(status)} and message {str(message)}')
+
+        if status == 0:
+            data_ret = {'status': 0, 'error_message': message}
+            json_data = json.dumps(data_ret)
+            return HttpResponse(json_data)
 
         # return ConfigureV2Backup(request)
 

@@ -55,8 +55,6 @@ class virtualHostUtilities:
 
 
 
-
-
     @staticmethod
     def OnBoardingHostName(Domain, tempStatusPath, skipRDNSCheck):
         import json
@@ -64,6 +62,14 @@ class virtualHostUtilities:
 
         logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'Setting up hostname,10')
         admin = Administrator.objects.get(pk=1)
+        
+        # Validate admin email exists
+        if not hasattr(admin, 'email') or not admin.email:
+            message = 'Administrator email is not configured. Please set admin email first. [404]'
+            logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
+            logging.CyberCPLogFileWriter.writeToFile(message)
+            return 0
+            
         try:
             config = json.loads(admin.config)
         except:
@@ -76,35 +82,63 @@ class virtualHostUtilities:
         except:
             CurrentHostName = ''
 
-        if not skipRDNSCheck:
-            if not os.path.exists('/home/cyberpanel/postfix'):
+        if skipRDNSCheck:
+            pass
+        else:
+            if os.path.exists('/home/cyberpanel/postfix'):
+                pass
+            else:
                 message = 'This server does not come with postfix installed. [404]'
                 print(message)
                 logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
                 logging.CyberCPLogFileWriter.writeToFile(message)
+                return 0
 
 
         ####
 
-        PostFixHostname = mailUtilities.FetchPostfixHostname()
-        serverIP = ACLManager.fetchIP()
+        # Get postfix hostname with error handling
+        try:
+            PostFixHostname = mailUtilities.FetchPostfixHostname()
+        except Exception as e:
+            message = f'Failed to fetch postfix hostname: {str(e)} [404]'
+            logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
+            logging.CyberCPLogFileWriter.writeToFile(message)
+            return 0
+
+        # Get server IP with error handling
+        try:
+            serverIP = ACLManager.fetchIP()
+        except Exception as e:
+            message = f'Failed to fetch server IP: {str(e)} [404]'
+            logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
+            logging.CyberCPLogFileWriter.writeToFile(message)
+            return 0
+
         ### if skipRDNSCheck == 1, it means we need to skip checking for rDNS
         if skipRDNSCheck:
-            ### so if skipRDNSCheck is 1 means we need to skip checking for rDNS so lets set current as rDNS because no checking is required
-            rDNS = CurrentHostName
+            ### When skipping rDNS check, include both current hostname and the domain being set up
+            ### This ensures both code paths work correctly
+            rDNS = [CurrentHostName, Domain]
         else:
-            rDNS = mailUtilities.reverse_dns_lookup(serverIP)
+            try:
+                rDNS = mailUtilities.reverse_dns_lookup(serverIP)
+            except Exception as e:
+                message = f'Failed to perform reverse DNS lookup: {str(e)} [404]'
+                logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
+                logging.CyberCPLogFileWriter.writeToFile(message)
+                return 0
 
         time.sleep(3)
 
         if os.path.exists(ProcessUtilities.debugPath):
-            print(f'Postfix Hostname: {PostFixHostname}. Server IP {serverIP}. rDNS: {rDNS}')
-            logging.CyberCPLogFileWriter.writeToFile(f'Postfix Hostname: {PostFixHostname}. Server IP {serverIP}. rDNS: {rDNS}, rDNS check {skipRDNSCheck}')
+            print(f'Postfix Hostname: {PostFixHostname}. Server IP {serverIP}. rDNS: {str(rDNS)}')
+            logging.CyberCPLogFileWriter.writeToFile(f'Postfix Hostname: {PostFixHostname}. Server IP {serverIP}. rDNS: {str(rDNS)}, rDNS check {skipRDNSCheck}')
 
         ### Case 1 if hostname already exists check if same hostname in postfix and rdns
         filePath = '/etc/letsencrypt/live/%s/fullchain.pem' % (PostFixHostname)
 
-        if (CurrentHostName == PostFixHostname and CurrentHostName == rDNS) and os.path.exists(filePath):
+        if (CurrentHostName == PostFixHostname and CurrentHostName in rDNS) and os.path.exists(filePath):
 
             # expireData = x509.get_notAfter().decode('ascii')
             # finalDate = datetime.strptime(expireData, '%Y%m%d%H%M%SZ')
@@ -115,16 +149,41 @@ class virtualHostUtilities:
             logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
             logging.CyberCPLogFileWriter.writeToFile(message)
 
-            x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, open(filePath, 'r').read())
-            SSLProvider = x509.get_issuer().get_components()[1][1].decode('utf-8')
+            try:
+                with open(filePath, 'r') as f:
+                    x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, f.read())
+                
+                # Safely extract SSL provider from issuer components
+                issuer_components = x509.get_issuer().get_components()
+                SSLProvider = 'Denial'  # Default to Denial if we can't find the provider
+                
+                # Look for the Organization (O) field in the issuer
+                for component in issuer_components:
+                    if component[0] == b'O':  # Organization field
+                        SSLProvider = component[1].decode('utf-8')
+                        break
+                    elif component[0] == b'CN' and SSLProvider == 'Denial':  # Fallback to CN if O not found
+                        SSLProvider = component[1].decode('utf-8')
+            except (FileNotFoundError, IndexError, OpenSSL.crypto.Error) as e:
+                SSLProvider = 'Denial'
+                logging.CyberCPLogFileWriter.writeToFile(f"SSL certificate check error: {str(e)}")
 
+            # Get website object and admin email
+            adminEmail = None
             try:
                 child = ChildDomains.objects.get(domain=CurrentHostName)
                 website = child.master
                 path = child.path
+                adminEmail = website.adminEmail
             except:
-                website = Websites.objects.get(domain=CurrentHostName)
-                path = f'/home/{CurrentHostName}/public_html'
+                try:
+                    website = Websites.objects.get(domain=CurrentHostName)
+                    path = f'/home/{CurrentHostName}/public_html'
+                    adminEmail = website.adminEmail
+                except:
+                    # If neither child domain nor website exists, use admin email
+                    adminEmail = admin.email
+                    path = f'/home/{CurrentHostName}/public_html'
 
             if SSLProvider == 'Denial':
                 message = 'It seems that the hostname used with mail service and rDNS does not have a valid SSL certificate, CyberPanel will try to issue valid SSL and restart related services,20'
@@ -132,12 +191,28 @@ class virtualHostUtilities:
                 logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
                 logging.CyberCPLogFileWriter.writeToFile(message)
 
-                virtualHostUtilities.issueSSL(CurrentHostName, path, website.adminEmail)
+                virtualHostUtilities.issueSSL(CurrentHostName, path, adminEmail)
 
                 ### once SSL is issued, re-read the SSL file and check if valid ssl got issued.
 
-                x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, open(filePath, 'r').read())
-                SSLProvider = x509.get_issuer().get_components()[1][1].decode('utf-8')
+                try:
+                    with open(filePath, 'r') as f:
+                        x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, f.read())
+                    
+                    # Safely extract SSL provider from issuer components
+                    issuer_components = x509.get_issuer().get_components()
+                    SSLProvider = 'Denial'  # Default to Denial if we can't find the provider
+                    
+                    # Look for the Organization (O) field in the issuer
+                    for component in issuer_components:
+                        if component[0] == b'O':  # Organization field
+                            SSLProvider = component[1].decode('utf-8')
+                            break
+                        elif component[0] == b'CN' and SSLProvider == 'Denial':  # Fallback to CN if O not found
+                            SSLProvider = component[1].decode('utf-8')
+                except (FileNotFoundError, IndexError, OpenSSL.crypto.Error) as e:
+                    SSLProvider = 'Denial'
+                    logging.CyberCPLogFileWriter.writeToFile(f"SSL re-check error: {str(e)}")
 
                 if SSLProvider == 'Denial':
                     message = 'Hostname SSL was already issued, and same hostname was used in mail server SSL, rDNS was also configured but we found invalid SSL. However, we tried to issue SSL and it failed. [404]'
@@ -160,7 +235,7 @@ class virtualHostUtilities:
                 logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
                 logging.CyberCPLogFileWriter.writeToFile(message)
 
-            command = 'systemctl restart postfix && systemctl restart dovecot && postmap -F hash:/etc/postfix/vmail_ssl.map'
+            command = 'postmap -F hash:/etc/postfix/vmail_ssl.map && systemctl restart postfix && systemctl restart dovecot'
             ProcessUtilities.executioner(command, 'root', True)
             logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'Completed. [200]')
         else:
@@ -195,40 +270,66 @@ class virtualHostUtilities:
                     coreResult = ab.submitWebsiteCreation(admin.id, DataToPass)
                     coreResult1 = json.loads((coreResult).content)
                     logging.CyberCPLogFileWriter.writeToFile("Creating website result....%s" % coreResult1)
-                    reutrntempath = coreResult1['tempStatusPath']
-                    while (1):
-                        lastLine = open(reutrntempath, 'r').read()
-                        if os.path.exists(ProcessUtilities.debugPath):
-                            logging.CyberCPLogFileWriter.writeToFile("Info web creating lastline ....... %s" % lastLine)
-                        if lastLine.find('[200]') > -1:
-                            break
-                        elif lastLine.find('[404]') > -1:
-                            statusFile = open(currentTemp, 'w')
-                            statusFile.writelines('Failed to Create Website: error: %s. [404]' % lastLine)
-                            statusFile.close()
-                            return 0
-                        else:
-                            statusFile = open(currentTemp, 'w')
-                            statusFile.writelines('Creating Website....,20')
-                            statusFile.close()
-                            time.sleep(2)
+                    returnTempPath = coreResult1.get('tempStatusPath')
+                    
+                    if not returnTempPath:
+                        with open(currentTemp, 'w') as statusFile:
+                            statusFile.write('Failed to get status path from website creation. [404]')
+                        return 0
+                    
+                    # Wait for website creation with timeout
+                    timeout = 120  # 2 minutes timeout
+                    poll_interval = 2  # Check every 2 seconds
+                    start_time = time.time()
+                    
+                    while (time.time() - start_time) < timeout:
+                        try:
+                            # Check if file exists before trying to read
+                            if not os.path.exists(returnTempPath):
+                                time.sleep(poll_interval)
+                                continue
+                                
+                            # Read file content safely
+                            with open(returnTempPath, 'r') as f:
+                                lastLine = f.read()
+                            
+                            if os.path.exists(ProcessUtilities.debugPath):
+                                logging.CyberCPLogFileWriter.writeToFile("Info web creating lastline ....... %s" % lastLine)
+                            
+                            # Check for completion
+                            if lastLine.find('[200]') > -1:
+                                break
+                            elif lastLine.find('[404]') > -1:
+                                with open(currentTemp, 'w') as statusFile:
+                                    statusFile.write('Failed to Create Website: error: %s. [404]' % lastLine)
+                                return 0
+                            else:
+                                with open(currentTemp, 'w') as statusFile:
+                                    statusFile.write('Creating Website....,20')
+                                    
+                        except Exception as e:
+                            logging.CyberCPLogFileWriter.writeToFile(f"Error reading status file: {str(e)}")
+                            
+                        time.sleep(poll_interval)
+                    else:
+                        # Timeout reached
+                        with open(currentTemp, 'w') as statusFile:
+                            statusFile.write('Website creation timed out after %d seconds. [404]' % timeout)
+                        return 0
 
             ### Case 2 where postfix hostname either does not exist or does not match with server hostname or
             ### hostname does not exists at all
 
-            ### if skipRDNSCheck == 1, it means we need to skip checking for rDNS
-            if skipRDNSCheck:
-                ### so if skipRDNSCheck is 1 means we need to skip checking for rDNS so lets set current domain as rDNS because no checking is required
-                rDNS = Domain
+            # Note: rDNS is already set at the beginning of the function, no need to set it again here
 
             if os.path.exists(ProcessUtilities.debugPath):
                 logging.CyberCPLogFileWriter.writeToFile(
-                    f'Second if: Postfix Hostname: {PostFixHostname}. Server IP {serverIP}. rDNS: {rDNS}, rDNS check {skipRDNSCheck}')
+                    f'Second if: Postfix Hostname: {PostFixHostname}. Server IP {serverIP}. rDNS: {str(rDNS)}, rDNS check {skipRDNSCheck}')
 
             #first check if hostname is already configured as rDNS, if not return error
 
 
-            if Domain != rDNS:
+            if Domain not in rDNS:
                 message = 'Domain that you have provided is not configured as rDNS for your server IP. [404]'
                 print(message)
                 logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, message)
@@ -242,19 +343,40 @@ class virtualHostUtilities:
 
             ### now issue hostname ssl
 
+            # Get website path - we don't need the website object itself here
             try:
                 website = Websites.objects.get(domain=Domain)
                 path = "/home/" + Domain + "/public_html"
             except:
-                website = ChildDomains.objects.get(domain=Domain)
-                path = website.path
+                try:
+                    child = ChildDomains.objects.get(domain=Domain)
+                    path = child.path
+                except:
+                    # If neither exists, use default path
+                    path = "/home/" + Domain + "/public_html"
 
             filePath = '/etc/letsencrypt/live/%s/fullchain.pem' % (Domain)
 
             virtualHostUtilities.issueSSLForHostName(Domain, path, 1)
 
-            x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, open(filePath, 'r').read())
-            SSLProvider = x509.get_issuer().get_components()[1][1].decode('utf-8')
+            try:
+                with open(filePath, 'r') as f:
+                    x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, f.read())
+                
+                # Safely extract SSL provider from issuer components
+                issuer_components = x509.get_issuer().get_components()
+                SSLProvider = 'Denial'  # Default to Denial if we can't find the provider
+                
+                # Look for the Organization (O) field in the issuer
+                for component in issuer_components:
+                    if component[0] == b'O':  # Organization field
+                        SSLProvider = component[1].decode('utf-8')
+                        break
+                    elif component[0] == b'CN' and SSLProvider == 'Denial':  # Fallback to CN if O not found
+                        SSLProvider = component[1].decode('utf-8')
+            except (FileNotFoundError, IndexError, OpenSSL.crypto.Error) as e:
+                SSLProvider = 'Denial'
+                logging.CyberCPLogFileWriter.writeToFile(f"Hostname SSL check error: {str(e)}")
 
             if SSLProvider == 'Denial':
                 message = 'Failed to issue Hostname SSL, either its DNS record is not propagated or the domain is behind Cloudflare. If DNS is already propagated you might have reached Lets Encrypt limit, please wait before trying again.. [404]'
@@ -272,8 +394,24 @@ class virtualHostUtilities:
 
             virtualHostUtilities.issueSSLForMailServer(Domain, path)
 
-            x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, open(filePath, 'r').read())
-            SSLProvider = x509.get_issuer().get_components()[1][1].decode('utf-8')
+            try:
+                with open(filePath, 'r') as f:
+                    x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, f.read())
+                
+                # Safely extract SSL provider from issuer components
+                issuer_components = x509.get_issuer().get_components()
+                SSLProvider = 'Denial'  # Default to Denial if we can't find the provider
+                
+                # Look for the Organization (O) field in the issuer
+                for component in issuer_components:
+                    if component[0] == b'O':  # Organization field
+                        SSLProvider = component[1].decode('utf-8')
+                        break
+                    elif component[0] == b'CN' and SSLProvider == 'Denial':  # Fallback to CN if O not found
+                        SSLProvider = component[1].decode('utf-8')
+            except (FileNotFoundError, IndexError, OpenSSL.crypto.Error) as e:
+                SSLProvider = 'Denial'
+                logging.CyberCPLogFileWriter.writeToFile(f"Mail server SSL check error: {str(e)}")
 
             if SSLProvider == 'Denial':
                 message = 'Failed to issue Mail server SSL, either its DNS record is not propagated or the domain is behind Cloudflare. [404]'
@@ -291,7 +429,8 @@ class virtualHostUtilities:
                 config['skipRDNSCheck'] = skipRDNSCheck
                 admin.config = json.dumps(config)
                 admin.save()
-                command = 'systemctl restart postfix && systemctl restart dovecot && postmap -F hash:/etc/postfix/vmail_ssl.map'
+                # First update the postfix hash database, then restart services
+                command = 'postmap -F hash:/etc/postfix/vmail_ssl.map && systemctl restart postfix && systemctl restart dovecot'
                 ProcessUtilities.executioner(command, 'root', True)
                 logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'Completed. [200]')
 
@@ -321,11 +460,17 @@ class virtualHostUtilities:
                     content = """\nlocal_name %s {
         ssl_cert = </etc/letsencrypt/live/%s/fullchain.pem
         ssl_key = </etc/letsencrypt/live/%s/privkey.pem
-}\n""" % (childDomain, childDomain, childDomain)
+}
+local_name %s {
+        ssl_cert = </etc/letsencrypt/live/%s/fullchain.pem
+        ssl_key = </etc/letsencrypt/live/%s/privkey.pem
+}
+\n""" % (childDomain, childDomain, childDomain, virtualHostName, virtualHostName, virtualHostName)
 
                     writeToFile = open(dovecotPath, 'a')
                     writeToFile.write(content)
                     writeToFile.close()
+
 
                 command = 'systemctl restart dovecot'
                 ProcessUtilities.executioner(command)
@@ -348,7 +493,7 @@ class virtualHostUtilities:
                     postfixMapFileContent = ''
 
                 if postfixMapFileContent.find('/live/%s/' % (childDomain)) == -1:
-                    mapContent = '%s /etc/letsencrypt/live/%s/privkey.pem /etc/letsencrypt/live/%s/fullchain.pem\n' % (
+                    mapContent = f'%s /etc/letsencrypt/live/%s/privkey.pem /etc/letsencrypt/live/%s/fullchain.pem\n{virtualHostName} /etc/letsencrypt/live/{virtualHostName}/privkey.pem /etc/letsencrypt/live/{virtualHostName}/fullchain.pem\n' % (
                         childDomain, childDomain, childDomain)
 
                     writeToFile = open(postfixMapFile, 'a')
@@ -361,6 +506,58 @@ class virtualHostUtilities:
 
                 command = 'systemctl restart postfix'
                 ProcessUtilities.executioner(command)
+
+        ### even if mail domain creation is not set, we will have to set up auto discover for main domain
+
+        dovecotPath = '/etc/dovecot/dovecot.conf'
+
+        if os.path.exists(dovecotPath):
+            dovecotContent = open(dovecotPath, 'r').read()
+
+            if dovecotContent.find('/live/%s/' % (virtualHostName)) == -1:
+                content = """
+local_name %s {
+        ssl_cert = </etc/letsencrypt/live/%s/fullchain.pem
+        ssl_key = </etc/letsencrypt/live/%s/privkey.pem
+}
+""" % (virtualHostName, virtualHostName, virtualHostName)
+
+                writeToFile = open(dovecotPath, 'a')
+                writeToFile.write(content)
+                writeToFile.close()
+
+            command = 'systemctl restart dovecot'
+            ProcessUtilities.executioner(command)
+
+            ### Update postfix configurations
+
+            postFixPath = '/etc/postfix/main.cf'
+
+            postFixContent = open(postFixPath, 'r').read()
+
+            if postFixContent.find('tls_server_sni_maps') == -1:
+                writeToFile = open(postFixPath, 'a')
+                writeToFile.write('\ntls_server_sni_maps = hash:/etc/postfix/vmail_ssl.map\n')
+                writeToFile.close()
+
+            postfixMapFile = '/etc/postfix/vmail_ssl.map'
+            try:
+                postfixMapFileContent = open(postfixMapFile, 'r').read()
+            except:
+                postfixMapFileContent = ''
+
+            if postfixMapFileContent.find('/live/%s/' % (virtualHostName)) == -1:
+                mapContent = f'{virtualHostName} /etc/letsencrypt/live/{virtualHostName}/privkey.pem /etc/letsencrypt/live/{virtualHostName}/fullchain.pem\n'
+                writeToFile = open(postfixMapFile, 'a')
+                writeToFile.write(mapContent)
+                writeToFile.close()
+
+            command = 'postmap -F hash:/etc/postfix/vmail_ssl.map'
+
+            ProcessUtilities.executioner(command)
+
+            command = 'systemctl restart postfix'
+            ProcessUtilities.executioner(command)
 
     @staticmethod
     def createVirtualHost(virtualHostName, administratorEmail, phpVersion, virtualHostUser, ssl,
@@ -527,6 +724,13 @@ class virtualHostUtilities:
 
             ###
 
+            spaceString = f'{selectedPackage.diskSpace}M {selectedPackage.diskSpace}M'
+
+            if selectedPackage.enforceDiskLimits:
+                command = f'setquota -u {virtualHostUser} {spaceString} 0 0 /'
+                ProcessUtilities.executioner(command)
+
+
             logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'Website successfully created. [200]')
 
             return 1, 'None'
@@ -545,9 +749,16 @@ class virtualHostUtilities:
             retValues = sslUtilities.issueSSLForDomain(virtualHost, adminEmail, path)
 
             if retValues[0] == 0:
-                print("0," + str(retValues[1]))
-                logging.CyberCPLogFileWriter.writeToFile(str(retValues[1]))
-                return 0, str(retValues[1])
+                # Enhanced error reporting
+                error_msg = str(retValues[1])
+                logging.CyberCPLogFileWriter.writeToFile(f"SSL issuance failed for {virtualHost}: {error_msg}")
+                
+                # Parse and format the error message for better readability
+                from plogical.sslUtilities import sslUtilities as sslUtil
+                parsed_error = sslUtil.parseACMEError(error_msg)
+                
+                print("0," + parsed_error)
+                return 0, parsed_error
 
             installUtilities.installUtilities.reStartLiteSpeed()
 
@@ -558,10 +769,12 @@ class virtualHostUtilities:
             ProcessUtilities.executioner(command)
 
             print("1,None")
+            logging.CyberCPLogFileWriter.writeToFile(f"SSL successfully issued for {virtualHost}")
             return 1, None
 
         except BaseException as msg:
-            logging.CyberCPLogFileWriter.writeToFile(str(msg) + " [issueSSL]")
+            error_detail = f"Exception in issueSSL for {virtualHost}: {str(msg)}"
+            logging.CyberCPLogFileWriter.writeToFile(error_detail + " [issueSSL]")
             print("0," + str(msg))
             return 0, str(msg)
 
@@ -762,7 +975,7 @@ class virtualHostUtilities:
 
             adminEmail = "email@" + virtualHost
 
-            retValues = sslUtilities.issueSSLForDomain(virtualHost, adminEmail, path)
+            retValues = sslUtilities.issueSSLForDomain(virtualHost, adminEmail, path, None, isHostname=True)
 
             if retValues[0] == 0:
                 print("0," + str(retValues[1]))
@@ -817,6 +1030,11 @@ class virtualHostUtilities:
                 cmd = shlex.split(command)
                 subprocess.call(cmd)
 
+            
+            command = 'systemctl restart fastapi_ssh_server.service'
+            cmd = shlex.split(command)
+            subprocess.call(cmd)
+
             print("1,None")
             return 1, 'None'
 
@@ -833,7 +1051,7 @@ class virtualHostUtilities:
             srcPrivKey = '/etc/letsencrypt/live/' + virtualHost + '/privkey.pem'
 
             adminEmail = "email@" + virtualHost
-            retValues = sslUtilities.issueSSLForDomain(virtualHost, adminEmail, path)
+            retValues = sslUtilities.issueSSLForDomain(virtualHost, adminEmail, path, None, isHostname=True)
 
             if retValues[0] == 0:
                 print("0," + str(retValues[1]))
@@ -1306,7 +1524,7 @@ class virtualHostUtilities:
 
                 if vhost.checkIfAliasExists(virtualHostName) == 1:
                     logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'This domain exists as Alias. [404]')
-                    return 0, "This domain exists as Alias."
+                    #return 0, "This domain exists as Alias."
 
             logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'DKIM Setup..,30')
 
@@ -1502,6 +1720,12 @@ class virtualHostUtilities:
                 else:
                     vhost.perHostVirtualConf(completePathToConfigFile, website.adminEmail, website.externalApp,
                                              phpVersion, virtualHostName, 0)
+
+                    sslFCPath = f'/etc/letsencrypt/live/{virtualHostName}/fullchain.pem'
+
+                    if os.path.exists(sslFCPath):
+                        sslUtilities.sslUtilities.installSSLForDomain(virtualHostName, website.adminEmail)
+
                 logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'Restarting server..,90')
                 installUtilities.installUtilities.reStartLiteSpeed()
                 logging.CyberCPLogFileWriter.statusWriter(tempStatusPath, 'Successfully converted. [200]')

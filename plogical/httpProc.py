@@ -36,6 +36,12 @@ class httpProc:
                 if self.data == None:
                     self.data = {}
 
+                from IncBackups.models import OneClickBackups
+                if OneClickBackups.objects.filter(owner=admin).count() == 0:
+                    self.data['backupDisplay'] = 1
+                else:
+                    self.data['backupDisplay'] = 0
+
                 ### Onboarding checks
 
                 if currentACL['admin']:
@@ -76,6 +82,7 @@ Please launch the <a href="/base/onboarding">set-up wizard</a> to get maximum ou
                         self.data['cosmetic'] = cosmetic
                     except:
                         pass
+
 
                 ACLManager.GetServiceStatus(self.data)
 

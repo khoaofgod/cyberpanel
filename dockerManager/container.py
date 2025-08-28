@@ -3,6 +3,7 @@
 import os.path
 import sys
 import django
+from datetime import datetime
 
 from plogical.DockerSites import Docker_Sites
 
@@ -136,8 +137,13 @@ class ContainerManager(multi.Thread):
         try:
             name = self.name
 
-            if ACLManager.checkContainerOwnership(name, userID) != 1:
-                return ACLManager.loadError()
+            # Check if user is admin or has container access
+            currentACL = ACLManager.loadedACL(userID)
+            if currentACL['admin'] != 1:
+                # For non-admin users, check container ownership
+                if ACLManager.checkContainerOwnership(name, userID) != 1:
+                    return ACLManager.loadError()
+            # Admin users can access any container, including ones not in database
 
             client = docker.from_env()
             dockerAPI = docker.APIClient()
@@ -148,25 +154,37 @@ class ContainerManager(multi.Thread):
                 return HttpResponse("Container not found")
 
             data = {}
-            con = Containers.objects.get(name=name)
-            data['name'] = name
-            data['image'] = con.image + ":" + con.tag
-            data['ports'] = json.loads(con.ports)
-            data['cid'] = con.cid
-            data['envList'] = json.loads(con.env)
-            data['volList'] = json.loads(con.volumes)
+            try:
+                con = Containers.objects.get(name=name)
+                data['name'] = name
+                data['image'] = con.image + ":" + con.tag
+                data['ports'] = json.loads(con.ports)
+                data['cid'] = con.cid
+                data['envList'] = json.loads(con.env)
+                data['volList'] = json.loads(con.volumes)
+                data['memoryLimit'] = con.memory
+                if con.startOnReboot == 1:
+                    data['startOnReboot'] = 'true'
+                    data['restartPolicy'] = "Yes"
+                else:
+                    data['startOnReboot'] = 'false'
+                    data['restartPolicy'] = "No"
+            except Containers.DoesNotExist:
+                # Container exists in Docker but not in database
+                data['name'] = name
+                data['image'] = container.image.tags[0] if container.image.tags else "Unknown"
+                data['ports'] = {}
+                data['cid'] = container.id
+                data['envList'] = {}
+                data['volList'] = {}
+                data['memoryLimit'] = 512
+                data['startOnReboot'] = 'false'
+                data['restartPolicy'] = "No"
 
             stats = container.stats(decode=False, stream=False)
             logs = container.logs(stream=True)
 
             data['status'] = container.status
-            data['memoryLimit'] = con.memory
-            if con.startOnReboot == 1:
-                data['startOnReboot'] = 'true'
-                data['restartPolicy'] = "Yes"
-            else:
-                data['startOnReboot'] = 'false'
-                data['restartPolicy'] = "No"
 
             if 'usage' in stats['memory_stats']:
                 # Calculate Usage
@@ -1098,7 +1116,6 @@ class ContainerManager(multi.Thread):
             da = Docker_Sites(None, passdata)
             retdata = da.ListContainers()
 
-
             data_ret = {'status': 1, 'error_message': 'None', 'data':retdata}
             json_data = json.dumps(data_ret)
             return HttpResponse(json_data)
@@ -1117,26 +1134,67 @@ class ContainerManager(multi.Thread):
             if admin.acl.adminStatus != 1:
                 return ACLManager.loadError()
 
-
             name = data['name']
             containerID = data['id']
 
-            passdata = {}
-            passdata["JobID"] = None
-            passdata['name'] = name
-            passdata['containerID'] = containerID
-            da = Docker_Sites(None, passdata)
-            retdata = da.ContainerInfo()
+            # Create a Docker client
+            client = docker.from_env()
+            container = client.containers.get(containerID)
 
+            # Get detailed container info
+            container_info = container.attrs
 
-            data_ret = {'status': 1, 'error_message': 'None', 'data':retdata}
+            # Calculate uptime
+            started_at = container_info.get('State', {}).get('StartedAt', '')
+            if started_at:
+                started_time = datetime.strptime(started_at.split('.')[0], '%Y-%m-%dT%H:%M:%S')
+                uptime = datetime.now() - started_time
+                uptime_str = str(uptime).split('.')[0]  # Format as HH:MM:SS
+            else:
+                uptime_str = "N/A"
+
+            # Get container details
+            details = {
+                'id': container.short_id,
+                'name': container.name,
+                'status': container.status,
+                'created': container_info.get('Created', ''),
+                'started_at': started_at,
+                'uptime': uptime_str,
+                'image': container_info.get('Config', {}).get('Image', ''),
+                'ports': container_info.get('NetworkSettings', {}).get('Ports', {}),
+                'volumes': container_info.get('Mounts', []),
+                'environment': self._mask_sensitive_env(container_info.get('Config', {}).get('Env', [])),
+                'memory_usage': container.stats(stream=False)['memory_stats'].get('usage', 0),
+                'cpu_usage': container.stats(stream=False)['cpu_stats']['cpu_usage'].get('total_usage', 0)
+            }
+
+            data_ret = {'status': 1, 'error_message': 'None', 'data': [1, details]}
             json_data = json.dumps(data_ret)
             return HttpResponse(json_data)
 
         except BaseException as msg:
-            data_ret = {'removeImageStatus': 0, 'error_message': str(msg)}
+            data_ret = {'status': 0, 'error_message': str(msg)}
             json_data = json.dumps(data_ret)
             return HttpResponse(json_data)
+
+    def _mask_sensitive_env(self, env_vars):
+        """Helper method to mask sensitive data in environment variables"""
+        masked_vars = []
+        sensitive_keywords = ['password', 'secret', 'key', 'token', 'auth']
+        
+        for var in env_vars:
+            if '=' in var:
+                name, value = var.split('=', 1)
+                # Check if this is a sensitive variable
+                if any(keyword in name.lower() for keyword in sensitive_keywords):
+                    masked_vars.append(f"{name}=********")
+                else:
+                    masked_vars.append(var)
+            else:
+                masked_vars.append(var)
+        
+        return masked_vars
 
     def getContainerApplog(self, userID=None, data=None):
         try:

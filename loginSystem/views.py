@@ -6,20 +6,18 @@ from .models import Administrator
 from plogical import hashPassword
 import json
 from packages.models import Package
-from firewall.models import FirewallRules
 from baseTemplate.models import version
 from plogical.getSystemInformation import SystemInformation
 from .models import ACL
 from plogical.acl import ACLManager
 from django.views.decorators.csrf import ensure_csrf_cookie
-from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter as logging
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils import translation
 # Create your views here.
 
-VERSION = '2.3'
-BUILD = 5
+VERSION = '2.4'
+BUILD = 3
 
 
 def verifyLogin(request):
@@ -103,26 +101,30 @@ def verifyLogin(request):
 
             if hashPassword.check_password(admin.password, password):
                 if admin.twoFA:
-                    if request.session['twofa'] == 0:
+                    if request.session.get('twofa', 1) == 0:
                         import pyotp
                         totp = pyotp.TOTP(admin.secretKey)
-                        del request.session['twofa']
-                        if totp.now() != data['twofa']:
+                        twofa_code = data.get('twofa', '')
+                        if not twofa_code or str(totp.now()) != str(twofa_code):
                             request.session['twofa'] = 0
                             data = {'userID': 0, 'loginStatus': 0, 'error_message': "Invalid verification code."}
                             json_data = json.dumps(data)
                             response.write(json_data)
                             return response
+                        # Clear the session flag after successful 2FA verification
+                        del request.session['twofa']
 
                 request.session['userID'] = admin.pk
 
-                ipAddr = request.META.get('REMOTE_ADDR')
+                ipAddr = request.META.get('HTTP_CF_CONNECTING_IP')
+                if ipAddr is None:
+                    ipAddr = request.META.get('REMOTE_ADDR')
 
                 if ipAddr.find(':') > -1:
-                    ipAddr = ipAddr.split(':')[:3]
-                    request.session['ipAddr'] = ''.join(ipAddr)
+                    ipAddr = ':'.join(ipAddr.split(':')[:3])
+                    request.session['ipAddr'] = ipAddr
                 else:
-                    request.session['ipAddr'] = request.META.get('REMOTE_ADDR')
+                    request.session['ipAddr'] = ipAddr
 
                 request.session.set_expiry(43200)
                 data = {'userID': admin.pk, 'loginStatus': 1, 'error_message': "None"}
@@ -131,7 +133,7 @@ def verifyLogin(request):
                 return response
 
             else:
-                data = {'userID': 0, 'loginStatus': 0, 'error_message': "wrong-password"}
+                data = {'userID': 0, 'loginStatus': 0, 'error_message': "login failed."}
                 json_data = json.dumps(data)
                 response.write(json_data)
                 return response
@@ -162,6 +164,7 @@ def loadLoginPage(request):
 
         #return render(request, 'baseTemplate/homePage.html', finaData)
     except KeyError:
+        from firewall.models import FirewallRules
 
         numberOfAdministrator = Administrator.objects.count()
         password = hashPassword.hash_password('1234567')

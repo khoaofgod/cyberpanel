@@ -1,17 +1,20 @@
+import json
 import os
 import sys
-
 import paramiko
-
 sys.path.append('/usr/local/CyberCP')
 import django
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "CyberCP.settings")
 try:
     django.setup()
+    from ApachController.ApacheVhosts import ApacheVhost
+    from plogical.acl import ACLManager
 except:
     pass
-import pysftp
+
+
+
 from plogical.randomPassword import generate_pass
 import pexpect
 from plogical import CyberCPLogFileWriter as logging
@@ -41,7 +44,7 @@ from random import randint
 from plogical.processUtilities import ProcessUtilities
 
 try:
-    from websiteFunctions.models import Websites, ChildDomains, Backups
+    from websiteFunctions.models import Websites, ChildDomains, Backups, NormalBackupDests
     from databases.models import Databases
     from loginSystem.models import Administrator
     from plogical.dnsUtilities import DNS
@@ -50,8 +53,8 @@ try:
 except:
     pass
 
-VERSION = '2.3'
-BUILD = 5
+VERSION = '2.4'
+BUILD = 3
 
 
 ## I am not the monster that you think I am..
@@ -379,10 +382,10 @@ class backupUtilities:
             #copytree('/home/%s/public_html' % domainName, '%s/%s' % (tempStoragePath, 'public_html'))
             #command = f'cp -R /home/{domainName}/public_html {tempStoragePath}/public_html'
             ### doing backup of whole dir and keeping it in public_html folder will restore from here - ref https://github.com/usmannasir/cyberpanel/issues/1196
-            command = f"rsync -av --exclude=.wp-cli --exclude=logs --exclude=backup --exclude=lscache /home/{domainName}/ {tempStoragePath}/public_html/"
-
-            if ProcessUtilities.normalExecutioner(command) == 0:
-                 raise BaseException(f'Failed to run cp command during backup generation.')
+            command = f"rsync -av --ignore-errors --exclude=.wp-cli --exclude=logs --exclude=backup --exclude=lscache /home/{domainName}/ {tempStoragePath}/public_html/"
+            ProcessUtilities.normalExecutioner(command)
+            # if ProcessUtilities.normalExecutioner(command) == 0:
+            #      raise BaseException(f'Failed to run cp command during backup generation.')
 
             # make_archive(os.path.join(tempStoragePath,"public_html"), 'gztar', os.path.join("/home",domainName,"public_html"))
 
@@ -465,6 +468,14 @@ class backupUtilities:
 
                 copy(completPathToConf, f'{CPHomeStorage}/vhost.conf')
 
+        #### also backup apache conf if available
+        from ApachController.ApacheVhosts import ApacheVhost
+
+        finalConfPathApache = ApacheVhost.configBasePath + domainName + '.conf'
+
+        if os.path.exists(finalConfPathApache):
+            copy(finalConfPathApache, f'{CPHomeStorage}/apache.conf')
+
         childDomains = backupMetaData.findall('ChildDomains/domain')
 
         try:
@@ -487,6 +498,14 @@ class backupUtilities:
                         #copy(completPathToConf, f'{tempStoragePath}/{actualChildDomain}.vhost.conf')
                         copy(completPathToConf, f'{CPHomeStorage}/{actualChildDomain}.vhost.conf')
 
+                ### also backup apache conf if available
+
+                finalConfPathApacheChild = ApacheVhost.configBasePath + actualChildDomain + '.conf'
+
+                if os.path.exists(finalConfPathApacheChild):
+                    copy(finalConfPathApacheChild, f'{CPHomeStorage}/{actualChildDomain}.apache.conf')
+
+                ##
 
                 ### Storing SSL for child domainsa
 
@@ -720,7 +739,7 @@ class backupUtilities:
 
                 dbName = database.find('dbName').text
 
-                if (VERSION == '2.1' or VERSION == '2.3') and int(BUILD) >= 1:
+                if ((VERSION == '2.1' or VERSION == '2.3') and int(BUILD) >= 1) or (VERSION == '2.4' and int(BUILD) >= 0):
 
                     logging.CyberCPLogFileWriter.writeToFile('Backup version 2.1.1+ detected..')
                     databaseUsers = database.findall('databaseUsers')
@@ -816,6 +835,7 @@ class backupUtilities:
             try:
                 version = backupMetaData.find('VERSION').text
                 build = backupMetaData.find('BUILD').text
+                phpSelectionGlobalMainSite = backupMetaData.find('phpSelection').text
                 twoPointO = 1
             except:
                 twoPointO = 0
@@ -899,13 +919,63 @@ class backupUtilities:
                             rmtree(websiteHome)
 
                         ## Let us try to restore SSL for Child Domains.
+                        from ApachController.ApacheController import ApacheController
 
                         try:
 
                             if os.path.exists(completPath + '/' + domain + '.vhost.conf'):
-                                completPathToConf = backupUtilities.Server_root + '/conf/vhosts/' + domain + '/vhost.conf'
+
                                 if CurrentServer == ProcessUtilities.decideServer():
-                                    copy(completPath + '/' + domain + '.vhost.conf', completPathToConf)
+
+                                    completPathToConf = backupUtilities.Server_root + '/conf/vhosts/' + domain + '/vhost.conf'
+                                    childConfPathinBKUP = completPath + '/' + domain + '.vhost.conf'
+                                    copy(childConfPathinBKUP, completPathToConf)
+
+                                    ### take care of apache conf
+
+                                    url = "https://platform.cyberpersons.com/CyberpanelAdOns/Adonpermission"
+                                    data = {
+                                        "name": "all",
+                                        "IP": ACLManager.GetServerIP()
+                                    }
+
+                                    import requests
+                                    response = requests.post(url, data=json.dumps(data))
+                                    Status = response.json()['status']
+
+                                    if (Status == 1):
+
+                                        childConfPathinBKUPApache = completPath + '/' + domain + '.apache.conf'
+                                        tempStatusPath = '/home/cyberpanel/fakePath'
+
+                                        if os.path.exists(ProcessUtilities.debugPath):
+                                            logging.CyberCPLogFileWriter.writeToFile(f'Conf path of apache for child domain {domain} in backup is {childConfPathinBKUPApache}')
+
+                                        childData = open(childConfPathinBKUP, 'r').read()
+
+                                        if childData.find('proxyApacheBackendSSL') > -1 and os.path.exists(childConfPathinBKUPApache):
+
+                                            if os.path.exists(ProcessUtilities.debugPath):
+                                                logging.CyberCPLogFileWriter.writeToFile(
+                                                    f'It seems child domain {domain} is using apache conf and {childConfPathinBKUPApache} also exists in backup file')
+
+                                            virtualHostUtilities.switchServer(domain, phpSelection, virtualHostUtilities.apache, tempStatusPath)
+
+                                            finalConfPathApache = ApacheVhost.configBasePath + domain + '.conf'
+
+
+                                            if os.path.exists(finalConfPathApache):
+
+                                                if os.path.exists(ProcessUtilities.debugPath):
+                                                    logging.CyberCPLogFileWriter.writeToFile(
+                                                        f'CyberPanel was able to successfully convert {domain} to apache conf as {finalConfPathApache} exists..')
+
+                                                copy(childConfPathinBKUPApache, finalConfPathApache)
+
+                                    ### apache ends
+
+
+
 
                             sslStoragePath = completPath + "/" + domain + ".cert.pem"
 
@@ -1003,7 +1073,7 @@ class backupUtilities:
 
                 dbName = database.find('dbName').text
 
-                if (VERSION == '2.1' or VERSION == '2.3') and int(BUILD) >= 1:
+                if ((VERSION == '2.1' or VERSION == '2.3') and int(BUILD) >= 1) or (VERSION == '2.4' and int(BUILD) >= 0):
 
                     logging.CyberCPLogFileWriter.writeToFile('Backup version 2.1.1+ detected..')
 
@@ -1122,7 +1192,51 @@ class backupUtilities:
             completPathToConf = backupUtilities.Server_root + '/conf/vhosts/' + masterDomain + '/vhost.conf'
             if os.path.exists(completPath + '/vhost.conf'):
                 if CurrentServer == ProcessUtilities.decideServer():
-                    copy(completPath + '/vhost.conf', completPathToConf)
+                    confPathMainSite = completPath + '/vhost.conf'
+                    copy(confPathMainSite, completPathToConf)
+
+
+                    ### apache starts here
+
+                    url = "https://platform.cyberpersons.com/CyberpanelAdOns/Adonpermission"
+                    data = {
+                        "name": "all",
+                        "IP": ACLManager.GetServerIP()
+                    }
+
+                    import requests
+                    response = requests.post(url, data=json.dumps(data))
+                    Status = response.json()['status']
+
+                    if (Status == 1):
+                        confPathApache = completPath + '/apache.conf'
+
+                        if os.path.exists(ProcessUtilities.debugPath):
+                            logging.CyberCPLogFileWriter.writeToFile(f'Conf path of apache for main site {masterDomain} in backup is {confPathApache}')
+
+                        tempStatusPath = '/home/cyberpanel/fakePath'
+
+                        childData = open(confPathMainSite, 'r').read()
+
+                        if childData.find('proxyApacheBackendSSL') > -1 and os.path.exists(confPathApache):
+
+                            if os.path.exists(ProcessUtilities.debugPath):
+                                logging.CyberCPLogFileWriter.writeToFile(
+                                    f'It seems main site {masterDomain} is using apache conf.')
+
+                            virtualHostUtilities.switchServer(masterDomain, phpSelectionGlobalMainSite, virtualHostUtilities.apache,
+                                                              tempStatusPath)
+
+                            finalConfPathApache = ApacheVhost.configBasePath + masterDomain + '.conf'
+
+                            if os.path.exists(ProcessUtilities.debugPath):
+                                logging.CyberCPLogFileWriter.writeToFile(
+                                    f'Apache conf path of main domain exists which means CyberPanel successfully converted site to Apache for {masterDomain}')
+
+                            if os.path.exists(confPathApache):
+                                copy(confPathApache, finalConfPathApache)
+
+                    ### apache ends here
 
             logging.CyberCPLogFileWriter.statusWriter(status, "Done")
 
@@ -1303,11 +1417,43 @@ class backupUtilities:
             command = 'chmod 600 %s' % ('/root/.ssh/cyberpanel.pub')
             ProcessUtilities.executioner(command)
 
-            sftp = ssh.open_sftp()
-            sftp.put('/root/.ssh/cyberpanel.pub', '.ssh/authorized_keys')
-            sftp.close()
+            try:
+                # Try to use SFTP to create .ssh directory if it doesn't exist
+                sftp = ssh.open_sftp()
+                try:
+                    sftp.stat('.ssh')
+                except FileNotFoundError:
+                    # Try to create .ssh directory via SFTP
+                    try:
+                        sftp.mkdir('.ssh')
+                    except:
+                        # Directory creation via SFTP might fail on some servers
+                        pass
+                
+                # Try to upload the key
+                sftp.put('/root/.ssh/cyberpanel.pub', '.ssh/authorized_keys')
+                sftp.close()
 
-            ssh.exec_command('chmod 600 .ssh/authorized_keys')
+                # Try to set permissions via SSH command (might fail on SFTP-only servers)
+                try:
+                    stdin, stdout, stderr = ssh.exec_command('chmod 600 .ssh/authorized_keys', timeout=5)
+                    stdout.channel.recv_exit_status()
+                except:
+                    # If chmod fails, it's likely an SFTP-only server
+                    # The key is uploaded, which is what matters for backups using password auth
+                    logging.CyberCPLogFileWriter.writeToFile(
+                        f'Could not set permissions on {IPAddress}, likely SFTP-only server')
+                    pass
+
+            except Exception as e:
+                # If we can't upload the key, it might be an SFTP-only server
+                # Return success anyway since password authentication works
+                logging.CyberCPLogFileWriter.writeToFile(
+                    f'Could not upload SSH key to {IPAddress}: {str(e)}, using password authentication')
+                ssh.close()
+                command = 'chmod 644 %s' % ('/root/.ssh/cyberpanel.pub')
+                ProcessUtilities.executioner(command)
+                return [1, "None"]
 
             ssh.close()
 
@@ -1329,35 +1475,83 @@ class backupUtilities:
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(IPAddress, port=int(port), username=user, password=password)
+            if password != 'NOT-NEEDED':
 
-            commands = [
-                "mkdir -p .ssh",
-                "rm -f .ssh/temp",
-                "rm -f .ssh/authorized_temp",
-                "cp .ssh/authorized_keys .ssh/temp",
-                "chmod 700 .ssh",
-                "chmod g-w ~",
-            ]
+                ssh.connect(IPAddress, port=int(port), username=user, password=password)
+                
+                # Try to execute SSH commands first
+                ssh_commands_supported = True
+                commands = [
+                    "mkdir -p .ssh",
+                    "rm -f .ssh/temp",
+                    "rm -f .ssh/authorized_temp",
+                    "cp .ssh/authorized_keys .ssh/temp",
+                    "chmod 700 .ssh",
+                    "chmod g-w ~",
+                ]
 
-            for command in commands:
-                try:
-                    ssh.exec_command(command)
-                except BaseException as msg:
-                    logging.CyberCPLogFileWriter.writeToFile(f'Error executing remote command {command}. Error {str(msg)}')
+                for command in commands:
+                    try:
+                        stdin, stdout, stderr = ssh.exec_command(command, timeout=5)
+                        exit_status = stdout.channel.recv_exit_status()
+                        error_output = stderr.read().decode()
+                        
+                        # Check if the command was rejected (SFTP-only server)
+                        if exit_status != 0 or "not allowed" in error_output.lower() or "channel closed" in error_output.lower():
+                            ssh_commands_supported = False
+                            logging.CyberCPLogFileWriter.writeToFile(
+                                f'SSH commands not supported on {IPAddress}, falling back to pure SFTP mode')
+                            break
+                    except BaseException as msg:
+                        ssh_commands_supported = False
+                        logging.CyberCPLogFileWriter.writeToFile(
+                            f'Error executing remote command {command}. Error {str(msg)}, falling back to pure SFTP mode')
+                        break
 
-            ssh.close()
+                ssh.close()
 
-            sendKey = backupUtilities.sendKey(IPAddress, password, port, user)
+                # If SSH commands are not supported, use pure SFTP mode
+                if not ssh_commands_supported:
+                    # For SFTP-only servers, we'll use password authentication directly
+                    # No need to setup SSH keys, just verify connection works
+                    try:
+                        test_ssh = paramiko.SSHClient()
+                        test_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                        test_ssh.connect(IPAddress, port=int(port), username=user, password=password)
+                        
+                        # Open SFTP connection to verify it works
+                        sftp = test_ssh.open_sftp()
+                        sftp.close()
+                        test_ssh.close()
+                        
+                        logging.CyberCPLogFileWriter.writeToFile(
+                            f'Pure SFTP mode verified for {IPAddress}')
+                        return [1, "None"]
+                    except Exception as e:
+                        return [0, f'SFTP connection failed: {str(e)}']
+                else:
+                    # SSH commands are supported, proceed with key setup
+                    sendKey = backupUtilities.sendKey(IPAddress, password, port, user)
 
-            if sendKey[0] == 1:
-                command = 'chmod 644 %s' % ('/root/.ssh/cyberpanel.pub')
-                ProcessUtilities.executioner(command)
-                return [1, "None"]
+                    if sendKey[0] == 1:
+                        command = 'chmod 644 %s' % ('/root/.ssh/cyberpanel.pub')
+                        ProcessUtilities.executioner(command)
+                        return [1, "None"]
+                    else:
+                        command = 'chmod 644 %s' % ('/root/.ssh/cyberpanel.pub')
+                        ProcessUtilities.executioner(command)
+                        return [0, sendKey[1]]
             else:
-                command = 'chmod 644 %s' % ('/root/.ssh/cyberpanel.pub')
-                ProcessUtilities.executioner(command)
-                return [0, sendKey[1]]
+                # Load the private key
+                private_key_path = '/root/.ssh/cyberpanel'
+                keyPrivate = paramiko.RSAKey(filename=private_key_path)
+
+                # Connect to the remote server using the private key
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(IPAddress, username=user, pkey=keyPrivate)
+
+                return [1, "None"]
 
         except paramiko.AuthenticationException:
             return [0, 'Authentication failed. [setupSSHKeys]']
@@ -1505,12 +1699,20 @@ class backupUtilities:
     def createBackupDir(IPAddress, port='22', user='root'):
 
         try:
+            # First try SSH command
             command = "sudo ssh -o StrictHostKeyChecking=no -p " + port + " -i /root/.ssh/cyberpanel " + user + "@" + IPAddress + " mkdir ~/backup"
 
             if os.path.exists(ProcessUtilities.debugPath):
                 logging.CyberCPLogFileWriter.writeToFile(command)
 
-            subprocess.call(shlex.split(command))
+            result = subprocess.call(shlex.split(command))
+            
+            # If SSH command fails, it might be an SFTP-only server
+            if result != 0:
+                logging.CyberCPLogFileWriter.writeToFile(
+                    f"SSH command failed for {IPAddress}, likely SFTP-only server. Skipping directory creation.")
+                # Don't fail - SFTP servers may have their own directory structure
+                return 1
 
             command = "sudo ssh -o StrictHostKeyChecking=no -p " + port + " -i /root/.ssh/cyberpanel " + user + "@" + IPAddress + ' "cat ~/.ssh/authorized_keys ~/.ssh/temp > ~/.ssh/authorized_temp"'
 
@@ -1526,10 +1728,13 @@ class backupUtilities:
                 logging.CyberCPLogFileWriter.writeToFile(command)
 
             subprocess.call(shlex.split(command))
+            
+            return 1
 
         except BaseException as msg:
             logging.CyberCPLogFileWriter.writeToFile(str(msg) + " [createBackupDir]")
-            return 0
+            # Don't fail for SFTP-only servers
+            return 1
 
     @staticmethod
     def host_key_verification(IPAddress):
@@ -2345,6 +2550,37 @@ def getConnectionStatus(ipAddress):
     except BaseException as msg:
         print(str(msg))
 
+def FetchOCBackupsFolders(id, owner):
+    # Load the private key
+    private_key_path = '/root/.ssh/cyberpanel'
+    keyPrivate = paramiko.RSAKey(filename=private_key_path)
+
+    from IncBackups.models import OneClickBackups
+    admin = Administrator.objects.get(userName=owner)
+    ocb = OneClickBackups.objects.get(pk=id, owner=admin)
+
+    nbd = NormalBackupDests.objects.get(name=ocb.sftpUser)
+    ip = json.loads(nbd.config)['ip']
+
+    # Connect to the remote server using the private key
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(ip, username=ocb.sftpUser, pkey=keyPrivate)
+
+    # Command to list directories under the specified path
+    command = f"ls -d cpbackups/*/"
+
+    # Execute the command
+    stdin, stdout, stderr = ssh.exec_command(command)
+
+    # Read the results
+    directories = stdout.read().decode().splitlines()
+
+    # Print directories
+    for directory in directories:
+        print(directory)
+
+
 
 def main():
     parser = argparse.ArgumentParser(description='CyberPanel Backup Generator')
@@ -2390,6 +2626,10 @@ def main():
     ### CPHomeStorage
 
     parser.add_argument('--CPHomeStorage', help='')
+
+    ### id
+
+    parser.add_argument('--id', help='')
 
 
     args = parser.parse_args()
@@ -2438,6 +2678,9 @@ def main():
         extraArgs['planName'] = args.planName
         bu = backupUtilities(extraArgs)
         bu.SubmitS3BackupRestore()
+
+    elif args.function == 'FetchOCBackupsFolders':
+        FetchOCBackupsFolders(args.id, args.user)
 
 if __name__ == "__main__":
     main()

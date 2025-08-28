@@ -24,10 +24,13 @@ def router(request):
         if admin.api == 0:
             return cm.ajaxPre(0, 'API Access Disabled.')
 
-        if cm.verifyLogin(request)[0] == 1:
-            pass
-        else:
-            return cm.verifyLogin(request)[1]
+        try:
+            if cm.verifyLogin(request)[0] == 1:
+                pass
+            else:
+                return cm.verifyLogin(request)[1]
+        except BaseException as msg:
+            return cm.ajaxPre(0, f"Something went wrong during token processing. ErrorL {str(msg)}")
 
 
         ## Debug Log
@@ -424,6 +427,14 @@ def router(request):
             return cm.saveWebsiteLimits(request)
         elif controller == 'getUsageData':
             return cm.getUsageData(request)
+        elif controller == 'installN8N':
+            return cm.installN8N()
+        elif controller == 'getN8NInstallStatus':
+            return cm.getN8NInstallStatus()
+        elif controller == 'listN8NInstallations':
+            return cm.listN8NInstallations()
+        elif controller == 'removeN8NInstallation':
+            return cm.removeN8NInstallation()
         else:
             return cm.ajaxPre(0, 'This function is not available in your version of CyberPanel.')
 

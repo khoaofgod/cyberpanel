@@ -115,21 +115,12 @@ class DNS:
             ipData = f.read()
             ipAddress = ipData.split('\n', 1)[0]
 
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python3.6/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command)
-
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python3.8/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command)
-
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python*/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command, None, True)
-
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python3.8/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command)
 
             import tldextract
 
-            extractDomain = tldextract.extract(domain)
+            no_cache_extract = tldextract.TLDExtract(cache_dir=None)
+
+            extractDomain = no_cache_extract(domain)
             topLevelDomain = extractDomain.domain + '.' + extractDomain.suffix
             subDomain = extractDomain.subdomain
 
@@ -263,7 +254,7 @@ class DNS:
 
                     ## MX Record.
 
-                    mxValue = "mail." + topLevelDomain
+                    mxValue = topLevelDomain
 
                     # record = Records(domainOwner=zone,
                     #                  domain_id=zone.id,
@@ -408,7 +399,7 @@ class DNS:
 
                     ## MX Record.
 
-                    mxValue = "mail." + topLevelDomain
+                    mxValue = topLevelDomain
 
                     # record = Records(domainOwner=zone,
                     #                  domain_id=zone.id,
@@ -500,7 +491,7 @@ class DNS:
 
                 ## MX Records
 
-                mxValue = "mail." + actualSubDomain
+                mxValue = actualSubDomain
 
                 # record = Records(domainOwner=zone,
                 #                  domain_id=zone.id,
@@ -571,18 +562,11 @@ class DNS:
     def createDKIMRecords(domain):
         try:
 
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python3.6/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command)
-
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python3.8/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command)
-
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python*/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command, None, True)
-
             import tldextract
 
-            extractDomain = tldextract.extract(domain)
+            no_cache_extract = tldextract.TLDExtract(cache_dir=None)
+
+            extractDomain = no_cache_extract(domain)
             topLevelDomain = extractDomain.domain + '.' + extractDomain.suffix
             subDomain = extractDomain.subdomain
 
@@ -696,11 +680,16 @@ class DNS:
                 return
 
             if zone.type == 'MASTER':
-                getSOA = Records.objects.get(domainOwner=zone, type='SOA')
-                soaContent = getSOA.content.split(' ')
-                soaContent[2] = str(int(soaContent[2]) + 1)
-                getSOA.content = " ".join(soaContent)
-                getSOA.save()
+                try:
+                    for getSOA in Records.objects.filter(domainOwner=zone, type='SOA'):
+                    #getSOA = Records.objects.get(domainOwner=zone, type='SOA')
+                        soaContent = getSOA.content.split(' ')
+                        soaContent[2] = str(int(soaContent[2]) + 1)
+                        getSOA.content = " ".join(soaContent)
+                        getSOA.save()
+                except:
+                    pass
+
 
             if type == 'NS':
                 if Records.objects.filter(name=name, type=type, content=value).count() == 0:

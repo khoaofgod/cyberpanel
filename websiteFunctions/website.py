@@ -15,6 +15,7 @@ django.setup()
 import json
 from plogical.acl import ACLManager
 import plogical.CyberCPLogFileWriter as logging
+from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter
 from websiteFunctions.models import Websites, ChildDomains, GitLogs, wpplugins, WPSites, WPStaging, WPSitesBackup, \
     RemoteBackupConfig, RemoteBackupSchedule, RemoteBackupsites, DockerPackages, PackageAssignment, DockerSites
 from plogical.virtualHostUtilities import virtualHostUtilities
@@ -42,6 +43,8 @@ from plogical.vhostConfs import vhostConfs
 from plogical.cronUtil import CronUtil
 from .StagingSetup import StagingSetup
 import validators
+from django.http import JsonResponse
+import ipaddress
 
 
 class WebsiteManager:
@@ -94,10 +97,15 @@ class WebsiteManager:
         response = requests.post(url, data=json.dumps(data))
         Status = response.json()['status']
 
+
         if (Status == 1) or ProcessUtilities.decideServer() == ProcessUtilities.ent:
             currentACL = ACLManager.loadedACL(userID)
             adminNames = ACLManager.loadAllUsers(userID)
             packagesName = ACLManager.loadPackages(userID, currentACL)
+
+            if len(packagesName) == 0:
+                packagesName = ['Default']
+
             FinalVersions = []
             userobj = Administrator.objects.get(pk=userID)
             counter = 0
@@ -125,20 +133,20 @@ class WebsiteManager:
             Data = {'packageList': packagesName, "owernList": adminNames, 'WPVersions': FinalVersions,
                     'Plugins': Plugins, 'Randam_String': rnpss.lower(), 'test_domain_data': test_domain_status}
             proc = httpProc(request, 'websiteFunctions/WPCreate.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
             return redirect(reverse('pricing'))
 
     def ListWPSites(self, request=None, userID=None, DeleteID=None):
+        import json
         currentACL = ACLManager.loadedACL(userID)
 
         admin = Administrator.objects.get(pk=userID)
-        tata = {}
-        tata['wp'] = []
-        tata['wpsites'] = []
-        tata['wp'] = ACLManager.GetALLWPObjects(currentACL, userID)
+        data = {}
+        wp_sites = ACLManager.GetALLWPObjects(currentACL, userID)
+        data['wp'] = wp_sites
 
         try:
             if DeleteID != None:
@@ -146,18 +154,30 @@ class WebsiteManager:
 
                 if ACLManager.checkOwnership(WPDelete.owner.domain, admin, currentACL) == 1:
                     WPDelete.delete()
-
         except BaseException as msg:
             pass
 
-        for sub in tata['wp']:
-            tata['wpsites'].append({'id': sub.id,
-                                    'title': sub.title,
-                                    'url': sub.FinalURL
-                                    })
+        sites = []
+        for site in data['wp']:
+            sites.append({
+                'id': site.id,
+                'title': site.title,
+                'url': site.FinalURL,
+                'production_status': True
+            })
 
-        proc = httpProc(request, 'websiteFunctions/WPsitesList.html',
-                        {"wpsite": tata['wpsites']})
+        context = {
+            "wpsite": json.dumps(sites),
+            "status": 1,
+            "total_sites": len(sites),
+            "debug_info": json.dumps({
+                "user_id": userID,
+                "is_admin": bool(currentACL.get('admin', 0)),
+                "wp_sites_count": wp_sites.count()
+            })
+        }
+
+        proc = httpProc(request, 'websiteFunctions/WPsitesList.html', context)
         return proc.render()
 
     def WPHome(self, request=None, userID=None, WPid=None, DeleteID=None):
@@ -202,14 +222,14 @@ class WebsiteManager:
                     da = str(msg)
 
                 proc = httpProc(request, 'websiteFunctions/WPsiteHome.html',
-                                Data, 'createWebsite')
+                                Data, 'createDatabase')
                 return proc.render()
             else:
                 from django.shortcuts import reverse
                 return redirect(reverse('pricing'))
         except:
             proc = httpProc(request, 'websiteFunctions/WPsiteHome.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
 
     def RestoreHome(self, request=None, userID=None, BackupID=None):
@@ -230,11 +250,18 @@ class WebsiteManager:
             Data['FileName'] = config['name']
             try:
                 Data['Backuptype'] = config['Backuptype']
+
+                if Data['Backuptype'] == 'DataBase Backup' or Data['Backuptype'] == 'Website Backup':
+                    Data['WPsites'] = [WPSites.objects.get(pk=Data['backupobj'].WPSiteID)]
+                else:
+                    Data['WPsites'] = ACLManager.GetALLWPObjects(currentACL, userID)
+
             except:
                 Data['Backuptype'] = None
-            Data['WPsites'] = ACLManager.GetALLWPObjects(currentACL, userID)
+                Data['WPsites'] = ACLManager.GetALLWPObjects(currentACL, userID)
+
             proc = httpProc(request, 'websiteFunctions/WPRestoreHome.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
@@ -283,7 +310,7 @@ class WebsiteManager:
                         })
 
             proc = httpProc(request, 'websiteFunctions/RemoteBackupConfig.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
@@ -319,7 +346,7 @@ class WebsiteManager:
                     'LastRun': LastRun
                 })
             proc = httpProc(request, 'websiteFunctions/BackupfileConfig.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
@@ -354,7 +381,7 @@ class WebsiteManager:
                 except:
                     pass
             proc = httpProc(request, 'websiteFunctions/AddRemoteBackupSite.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
@@ -384,10 +411,10 @@ class WebsiteManager:
 
             backobj = WPSitesBackup.objects.filter(owner=admin).order_by('-id')
 
-            if ACLManager.CheckIPBackupObjectOwner(currentACL, backobj, admin) == 1:
-                pass
-            else:
-                return ACLManager.loadError()
+            # if ACLManager.CheckIPBackupObjectOwner(currentACL, backobj, admin) == 1:
+            #     pass
+            # else:
+            #     return ACLManager.loadError()
 
             try:
                 if DeleteID != None:
@@ -428,7 +455,7 @@ class WebsiteManager:
                 })
 
             proc = httpProc(request, 'websiteFunctions/RestoreBackups.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
@@ -487,7 +514,7 @@ class WebsiteManager:
             data['password'] = password
 
             proc = httpProc(request, 'websiteFunctions/AutoLogin.html',
-                            data, 'createWebsite')
+                            data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
@@ -504,7 +531,7 @@ class WebsiteManager:
 
             Data = {'Selectedplugins': Selectedplugins, }
             proc = httpProc(request, 'websiteFunctions/WPConfigurePlugins.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
         else:
             from django.shortcuts import reverse
@@ -520,7 +547,7 @@ class WebsiteManager:
 
             Data = {'packageList': packagesName, "owernList": adminNames, 'phps': phps}
             proc = httpProc(request, 'websiteFunctions/WPAddNewPlugin.html',
-                            Data, 'createWebsite')
+                            Data, 'createDatabase')
             return proc.render()
 
         return redirect(reverse('pricing'))
@@ -598,7 +625,7 @@ class WebsiteManager:
         Data['BucketName'] = pluginobj.Name
 
         proc = httpProc(request, 'websiteFunctions/WPEidtPlugin.html',
-                        Data, 'createWebsite')
+                        Data, 'createDatabase')
         return proc.render()
 
     def deletesPlgin(self, userID=None, data=None, ):
@@ -834,6 +861,19 @@ class WebsiteManager:
                 Vhuser, FinalPHPPath, path)
             lscachee = ProcessUtilities.outputExecutioner(command)
 
+            # Get current theme
+            command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp theme list --status=active --field=name --skip-plugins --skip-themes --path=%s 2>/dev/null' % (
+                Vhuser, FinalPHPPath, path)
+            currentTheme = ProcessUtilities.outputExecutioner(command, None, True)
+            currentTheme = currentTheme.strip()
+
+            # Get number of plugins
+            command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp plugin list --field=name --skip-plugins --skip-themes --path=%s 2>/dev/null' % (
+                Vhuser, FinalPHPPath, path)
+            plugins = ProcessUtilities.outputExecutioner(command, None, True)
+            pluginCount = len([p for p in plugins.split('\n') if p.strip()])
+
+
             if lscachee.find('Status: Active') > -1:
                 lscache = 1
             else:
@@ -856,6 +896,8 @@ class WebsiteManager:
             command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp maintenance-mode status --skip-plugins --skip-themes --path=%s' % (
                 Vhuser, FinalPHPPath, path)
             maintenanceMod = ProcessUtilities.outputExecutioner(command)
+
+            
 
             result = maintenanceMod.splitlines()[-1]
             if result.find('not active') > -1:
@@ -887,7 +929,10 @@ class WebsiteManager:
                 'searchIndex': searchindex,
                 'maintenanceMode': maintenanceMode,
                 'passwordprotection': passwd,
-                'wpcron': wpcron
+                'wpcron': wpcron,
+                'theme': currentTheme,
+                'activePlugins': pluginCount,
+                'phpVersion': wpsite.owner.phpSelection
 
             }
 
@@ -1910,173 +1955,143 @@ class WebsiteManager:
             data_ret = {'status': 0, 'installStatus': 0, 'error_message': str(msg)}
             json_data = json.dumps(data_ret)
             return HttpResponse(json_data)
-
+        
     def UpdateWPSettings(self, userID=None, data=None):
-        try:
+        # Map old setting names to new ones
+        setting_map = {
+            'PasswordProtection': 'password-protection',
+            'searchIndex': 'search-indexing',
+            'debugging': 'debugging',
+            'maintenanceMode': 'maintenance-mode',
+            'lscache': 'lscache',
+            'Wpcron': 'wpcron',
+            # Add more mappings as needed
+        }
 
+        siteId = data.get('siteId') or data.get('WPid')
+        if not siteId:
+            resp = {'status': 0, 'error_message': 'Missing siteId or WPid'}
+            return JsonResponse(resp)
+
+        # Accept both new and old setting names
+        setting = data.get('setting')
+        if not setting:
+            for old_key in setting_map:
+                if old_key in data:
+                    setting = old_key
+                    data['settingValue'] = data[old_key]
+                    break
+
+        # Map to new setting name if needed
+        setting = setting_map.get(setting, setting)
+        value = data.get('value') or data.get('settingValue')
+
+        try:
             currentACL = ACLManager.loadedACL(userID)
             admin = Administrator.objects.get(pk=userID)
+            wpsite = WPSites.objects.get(pk=siteId)
 
-            WPManagerID = data['WPid']
-            setting = data['setting']
-
-            if setting == 'PasswordProtection':
-                PPUsername = data['PPUsername']
-                PPPassword = data['PPPassword']
-            else:
-                settingValue = data['settingValue']
-
-            wpsite = WPSites.objects.get(pk=WPManagerID)
-
-            if ACLManager.checkOwnership(wpsite.owner.domain, admin, currentACL) == 1:
-                pass
-            else:
+            if ACLManager.checkOwnership(wpsite.owner.domain, admin, currentACL) != 1:
                 return ACLManager.loadError()
 
-            path = wpsite.path
-
+            # Get PHP version and path
             Webobj = Websites.objects.get(pk=wpsite.owner_id)
-
             Vhuser = Webobj.externalApp
             PHPVersion = Webobj.phpSelection
             php = ACLManager.getPHPString(PHPVersion)
             FinalPHPPath = '/usr/local/lsws/lsphp%s/bin/php' % (php)
 
-            if setting == 'lscache':
-                if settingValue:
-
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp plugin install litespeed-cache --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp plugin activate litespeed-cache --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-
-
-                else:
-                    command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp plugin deactivate litespeed-cache --path=%s --skip-plugins --skip-themes' % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
+            # Update the appropriate setting based on the setting type
+            if setting == 'search-indexing':
+                command = f'sudo -u {Vhuser} {FinalPHPPath} -d error_reporting=0 /usr/bin/wp option update blog_public {value} --skip-plugins --skip-themes --path={wpsite.path}'
             elif setting == 'debugging':
-
-                command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp litespeed-purge all --path=%s --skip-plugins --skip-themes" % (
-                    Vhuser, FinalPHPPath, path)
-                stdoutput = ProcessUtilities.outputExecutioner(command)
-
-                if settingValue:
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp config set WP_DEBUG true --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging mk true 1  output:" + str(stdoutput))
-
-                    command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp config list --skip-plugins --skip-themes --path=%s' % (
-                        Vhuser, FinalPHPPath, path)
-                    stdout = ProcessUtilities.outputExecutioner(command)
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging output:" + str(stdout))
-
-
+                if value:
+                    command = f'sudo -u {Vhuser} {FinalPHPPath} -d error_reporting=0 /usr/bin/wp config set WP_DEBUG true --raw --skip-plugins --skip-themes --path={wpsite.path}'
                 else:
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp config set WP_DEBUG false --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging mk false 0  output:" + str(stdoutput))
-
-                    command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp config list --skip-plugins --skip-themes --path=%s' % (
-                        Vhuser, FinalPHPPath, path)
-                    stdout = ProcessUtilities.outputExecutioner(command)
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging output:" + str(stdout))
-            elif setting == 'searchIndex':
-
-                command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp litespeed-purge all --path=%s --skip-plugins --skip-themes" % (
-                    Vhuser, FinalPHPPath, path)
-                stdoutput = ProcessUtilities.outputExecutioner(command)
-
-                if settingValue:
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp option update blog_public 1 --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-
-
+                    command = f'sudo -u {Vhuser} {FinalPHPPath} -d error_reporting=0 /usr/bin/wp config set WP_DEBUG false --raw --skip-plugins --skip-themes --path={wpsite.path}'
+            elif setting == 'password-protection':
+                vhostName = wpsite.owner.domain
+                vhostPassDir = f'/home/{vhostName}'
+                path = f'{vhostPassDir}/{siteId}'
+                if value:
+                    tempPath = f'/home/cyberpanel/{str(randint(1000, 9999))}'
+                    os.makedirs(tempPath)
+                    htpasswd = f'{tempPath}/.htpasswd'
+                    htaccess = f'{tempPath}/.htaccess'
+                    password = randomPassword.generate_pass(12)
+                    command = f"htpasswd -cb {htpasswd} admin {password}"
+                    ProcessUtilities.executioner(command)
+                    htaccess_content = f"""
+AuthType Basic
+AuthName "Restricted Access"
+AuthUserFile {path}/.htpasswd
+Require valid-user
+"""
+                    with open(htaccess, 'w') as f:
+                        f.write(htaccess_content)
+                    command = f"mkdir -p {path}"
+                    ProcessUtilities.executioner(command, wpsite.owner.externalApp)
+                    command = f"mv {htpasswd} {path}/.htpasswd"
+                    ProcessUtilities.executioner(command, wpsite.owner.externalApp)
+                    command = f"mv {htaccess} {wpsite.path}/.htaccess"
+                    ProcessUtilities.executioner(command, wpsite.owner.externalApp)
+                    command = f"rm -rf {tempPath}"
+                    ProcessUtilities.executioner(command)
                 else:
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp option update blog_public 0 --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-            elif setting == 'maintenanceMode':
-
-                command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp litespeed-purge all --path=%s --skip-plugins --skip-themes" % (
-                    Vhuser, FinalPHPPath, path)
-                stdoutput = ProcessUtilities.outputExecutioner(command)
-
-                if settingValue:
-
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp maintenance-mode activate --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-
-
+                    if os.path.exists(path):
+                        command = f"rm -rf {path}"
+                        ProcessUtilities.executioner(command, wpsite.owner.externalApp)
+                    htaccess = f'{wpsite.path}/.htaccess'
+                    if os.path.exists(htaccess):
+                        command = f"rm -f {htaccess}"
+                        ProcessUtilities.executioner(command, wpsite.owner.externalApp)
+                    resp = {'status': 1, 'error_message': 'None'}
+                    if data.get('legacy_response'):
+                        import json
+                        return HttpResponse(json.dumps(resp))
+                    else:
+                        return JsonResponse(resp)
+            elif setting == 'maintenance-mode':
+                if value:
+                    command = f'sudo -u {Vhuser} {FinalPHPPath} -d error_reporting=0 /usr/bin/wp maintenance-mode activate --skip-plugins --skip-themes --path={wpsite.path}'
                 else:
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp maintenance-mode deactivate --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-            elif setting == 'PasswordProtection':
-                execPath = f"/usr/local/CyberCP/bin/python {virtualHostUtilities.cyberPanel}/plogical/virtualHostUtilities.py"
-                execPath = f"{execPath} EnableDisablePP --username '{PPUsername}' --password '{PPPassword}' " \
-                           f"--virtualHostName {Webobj.domain} --path {path} --wpid {str(wpsite.id)} --virtualHostUser {Webobj.externalApp}"
-                ProcessUtilities.executioner(execPath)
-
-            elif setting == 'Wpcron':
-
-                command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp litespeed-purge all --path=%s --skip-plugins --skip-themes" % (
-                    Vhuser, FinalPHPPath, path)
-
-                stdoutput = ProcessUtilities.outputExecutioner(command)
-
-                if settingValue:
-
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp config set DISABLE_WP_CRON true --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
-
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging mk true 1  output:" + str(stdoutput))
-
-                    command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp config list --skip-plugins --skip-themes --path=%s' % (
-
-                        Vhuser, FinalPHPPath, path)
-
-                    stdout = ProcessUtilities.outputExecutioner(command)
-
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging output:" + str(stdout))
-
-
-
+                    command = f'sudo -u {Vhuser} {FinalPHPPath} -d error_reporting=0 /usr/bin/wp maintenance-mode deactivate --skip-plugins --skip-themes --path={wpsite.path}'
+            elif setting == 'lscache':
+                if value:
+                    command = f'sudo -u {Vhuser} {FinalPHPPath} -d error_reporting=0 /usr/bin/wp plugin activate litespeed-cache --skip-plugins --skip-themes --path={wpsite.path}'
                 else:
+                    command = f'sudo -u {Vhuser} {FinalPHPPath} -d error_reporting=0 /usr/bin/wp plugin deactivate litespeed-cache --skip-plugins --skip-themes --path={wpsite.path}'
+            else:
+                resp = {'status': 0, 'error_message': 'Invalid setting type'}
+                if data.get('legacy_response'):
+                    import json
+                    return HttpResponse(json.dumps(resp))
+                else:
+                    return JsonResponse(resp)
 
-                    command = "sudo -u %s %s -d error_reporting=0 /usr/bin/wp config set DISABLE_WP_CRON false --path=%s --skip-plugins --skip-themes" % (
-                        Vhuser, FinalPHPPath, path)
+            result = ProcessUtilities.outputExecutioner(command)
+            if result.find('Error:') > -1:
+                resp = {'status': 0, 'error_message': result}
+                if data.get('legacy_response'):
+                    import json
+                    return HttpResponse(json.dumps(resp))
+                else:
+                    return JsonResponse(resp)
 
-                    stdoutput = ProcessUtilities.outputExecutioner(command)
-
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging mk false 0  output:" + str(stdoutput))
-
-                    command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp config list --skip-plugins --skip-themes --path=%s' % (
-
-                        Vhuser, FinalPHPPath, path)
-
-                    stdout = ProcessUtilities.outputExecutioner(command)
-
-                    logging.CyberCPLogFileWriter.writeToFile("Debugging output:" + str(stdout))
-
-            data_ret = {'status': 1, 'error_message': 'None'}
-            json_data = json.dumps(data_ret)
-            return HttpResponse(json_data)
-
+            resp = {'status': 1, 'error_message': 'None'}
+            if data.get('legacy_response'):
+                import json
+                return HttpResponse(json.dumps(resp))
+            else:
+                return JsonResponse(resp)
 
         except BaseException as msg:
-            data_ret = {'status': 0, 'installStatus': 0, 'error_message': str(msg)}
-            json_data = json.dumps(data_ret)
-            return HttpResponse(json_data)
+            resp = {'status': 0, 'error_message': str(msg)}
+            if data and data.get('legacy_response'):
+                import json
+                return HttpResponse(json.dumps(resp))
+            else:
+                return JsonResponse(resp)
 
     def submitWorpressCreation(self, userID=None, data=None):
         try:
@@ -2216,8 +2231,8 @@ class WebsiteManager:
             execPath = "/usr/local/CyberCP/bin/python " + virtualHostUtilities.cyberPanel + "/plogical/virtualHostUtilities.py"
             execPath = execPath + " createVirtualHost --virtualHostName " + domain + \
                        " --administratorEmail " + adminEmail + " --phpVersion '" + phpSelection + \
-                       "' --virtualHostUser " + externalApp + " --ssl " + str(data['ssl']) + " --dkimCheck " \
-                       + str(data['dkimCheck']) + " --openBasedir " + str(data['openBasedir']) + \
+                       "' --virtualHostUser " + externalApp + " --ssl " + str(1) + " --dkimCheck " \
+                       + str(1) + " --openBasedir " + str(data['openBasedir']) + \
                        ' --websiteOwner "' + websiteOwner + '" --package "' + packageName + '" --tempStatusPath ' + tempStatusPath + " --apache " + apacheBackend + " --mailDomain %s" % (
                            mailDomain)
 
@@ -2318,8 +2333,7 @@ class WebsiteManager:
             execPath = "/usr/local/CyberCP/bin/python " + virtualHostUtilities.cyberPanel + "/plogical/virtualHostUtilities.py"
 
             execPath = execPath + " createDomain --masterDomain " + masterDomain + " --virtualHostName " + domain + \
-                       " --phpVersion '" + phpSelection + "' --ssl " + str(data['ssl']) + " --dkimCheck " + str(
-                data['dkimCheck']) \
+                       " --phpVersion '" + phpSelection + "' --ssl " + str(1) + " --dkimCheck " + str(1) \
                        + " --openBasedir " + str(data['openBasedir']) + ' --path ' + path + ' --websiteOwner ' \
                        + admin.userName + ' --tempStatusPath ' + tempStatusPath + " --apache " + apacheBackend + f' --aliasDomain {str(alias)}'
 
@@ -2488,10 +2502,6 @@ class WebsiteManager:
             return HttpResponse(json_data)
 
     def findWebsitesListJson(self, websites):
-
-        json_data = "["
-        checker = 0
-
         try:
             ipFile = "/etc/cyberpanel/machineIP"
             f = open(ipFile)
@@ -2501,55 +2511,41 @@ class WebsiteManager:
             logging.CyberCPLogFileWriter.writeToFile("Failed to read machine IP, error:" + str(msg))
             ipAddress = "192.168.100.1"
 
-        ### lets first find php path
+        json_data = []
 
-        from plogical.phpUtilities import phpUtilities
-
-        if os.path.exists(ProcessUtilities.debugPath):
-            logging.CyberCPLogFileWriter.writeToFile(f'findWebsitesListJson 1')
-
-        for items in websites:
-            if os.path.exists(ProcessUtilities.debugPath):
-                logging.CyberCPLogFileWriter.writeToFile(f'findWebsitesListJson 2')
-            if items.state == 0:
-                state = "Suspended"
-            else:
-                state = "Active"
-
-            vhFile = f'/usr/local/lsws/conf/vhosts/{items.domain}/vhost.conf'
-
-            if os.path.exists(ProcessUtilities.debugPath):
-                logging.CyberCPLogFileWriter.writeToFile(vhFile)
-
+        for website in websites:
+            wp_sites = []
             try:
-                PHPVersionActual = phpUtilities.WrapGetPHPVersionFromFileToGetVersionWithPHP(vhFile)
+                wp_sites = WPSites.objects.filter(owner=website)
+                wp_sites = [{
+                    'id': wp.id,
+                    'title': wp.title,
+                    'url': wp.FinalURL,
+                    'version': wp.version if hasattr(wp, 'version') else 'Unknown',
+                    'phpVersion': wp.phpVersion if hasattr(wp, 'phpVersion') else 'Unknown'
+                } for wp in wp_sites]
             except:
-                PHPVersionActual = 'PHP 8.1'
+                pass
 
-            if os.path.exists(ProcessUtilities.debugPath):
-                logging.CyberCPLogFileWriter.writeToFile(f'findWebsitesListJson 3')
+            # Calculate disk usage
+            DiskUsage, DiskUsagePercentage, bwInMB, bwUsage = virtualHostUtilities.FindStats(website)
+            diskUsed = "%sMB" % str(DiskUsage)
 
-            DiskUsage, DiskUsagePercentage, bwInMB, bwUsage = virtualHostUtilities.FindStats(items)
-            if os.path.exists(ProcessUtilities.debugPath):
-                logging.CyberCPLogFileWriter.writeToFile(f'findWebsitesListJson 4')
-            try:
-                diskUsed = "%sMB" % str(DiskUsage)
-            except:
-                diskUsed = "%sMB" % str(0)
+            # Convert numeric state to text
+            state = "Active" if website.state == 1 else "Suspended"
 
-            dic = {'domain': items.domain, 'adminEmail': items.adminEmail, 'ipAddress': ipAddress,
-                   'admin': items.admin.userName, 'package': items.package.packageName, 'state': state,
-                   'diskUsed': diskUsed, 'phpVersion': PHPVersionActual}
-
-            if checker == 0:
-                json_data = json_data + json.dumps(dic)
-                checker = 1
-            else:
-                json_data = json_data + ',' + json.dumps(dic)
-
-        json_data = json_data + ']'
-
-        return json_data
+            json_data.append({
+                'domain': website.domain,
+                'adminEmail': website.adminEmail,
+                'phpVersion': website.phpSelection,
+                'state': state,
+                'ipAddress': ipAddress,
+                'package': website.package.packageName,
+                'admin': website.admin.userName,
+                'wp_sites': wp_sites,
+                'diskUsed': diskUsed
+            })
+        return json.dumps(json_data)
 
 
 
@@ -2767,38 +2763,360 @@ class WebsiteManager:
 
             if state == "Suspend":
                 confPath = virtualHostUtilities.Server_root + "/conf/vhosts/" + websiteName
-                command = "mv " + confPath + " " + confPath + "-suspended"
-                ProcessUtilities.popenExecutioner(command)
-
-                childDomains = website.childdomains_set.all()
-
-                for items in childDomains:
-                    confPath = virtualHostUtilities.Server_root + "/conf/vhosts/" + items.domain
-                    command = "mv " + confPath + " " + confPath + "-suspended"
+                vhostConfPath = confPath + "/vhost.conf"
+                
+                # Ensure suspension page exists and has proper permissions
+                suspensionPagePath = "/usr/local/CyberCP/websiteFunctions/suspension.html"
+                if not os.path.exists(suspensionPagePath):
+                    # Create default suspension page if it doesn't exist
+                    defaultSuspensionHTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Website Suspended</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .container {
+            text-align: center;
+            background-color: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 500px;
+        }
+        h1 {
+            color: #e74c3c;
+            margin-bottom: 20px;
+        }
+        p {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        .contact {
+            color: #777;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Website Suspended</h1>
+        <p>This website has been temporarily suspended. This could be due to various reasons including billing issues, policy violations, or administrative actions.</p>
+        <p>If you are the website owner, please contact your hosting provider for more information about why your account was suspended and how to restore service.</p>
+        <p class="contact">For support, please contact your system administrator.</p>
+    </div>
+</body>
+</html>"""
+                    try:
+                        # Create directory if it doesn't exist
+                        dirPath = os.path.dirname(suspensionPagePath)
+                        if not os.path.exists(dirPath):
+                            command = f"mkdir -p {dirPath}"
+                            ProcessUtilities.executioner(command)
+                        
+                        # Write the HTML content to a temporary file in /home/cyberpanel
+                        tempFile = "/home/cyberpanel/suspension_temp.html"
+                        
+                        # Create the file using normal Python file operations
+                        with open(tempFile, 'w') as f:
+                            f.write(defaultSuspensionHTML)
+                        
+                        # Use ProcessUtilities to move the file to the final location
+                        command = f"mv {tempFile} {suspensionPagePath}"
+                        ProcessUtilities.executioner(command)
+                    except:
+                        pass
+                
+                # Set proper permissions for suspension page
+                try:
+                    command = f"chown lsadm:lsadm {suspensionPagePath}"
                     ProcessUtilities.executioner(command)
+                    command = f"chmod 644 {suspensionPagePath}"
+                    ProcessUtilities.executioner(command)
+                except:
+                    pass
+                
+                # Create suspension configuration with end marker
+                suspensionConf = """# Website Suspension Configuration
+context /{
+  location                        $DOC_ROOT/
+  allowBrowse                     1
+  
+  rewrite  {
+    enable                  1
+    autoLoadHtaccess        0
+    rules                   <<<END_rules
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/cyberpanel_suspension_page\.html$
+RewriteRule ^(.*)$ /cyberpanel_suspension_page.html [L]
+END_rules
+  }
+  
+  addDefaultCharset               off
+}
 
+context /cyberpanel_suspension_page.html {
+  location                        /usr/local/CyberCP/websiteFunctions/suspension.html
+  accessible                      1
+  extraHeaders                    X-Frame-Options: DENY
+  allowBrowse                     1
+}
+# End Website Suspension Configuration
+"""
+                
+                try:
+                    # Read current vhost configuration
+                    with open(vhostConfPath, 'r') as f:
+                        vhostContent = f.read()
+                    
+                    if "# Website Suspension Configuration" not in vhostContent:
+                        # Check if there's an existing rewrite block at the root level
+                        # If so, we need to comment it out to avoid conflicts
+                        
+                        # Pattern to find root-level rewrite block
+                        rewrite_pattern = r'^(rewrite\s*\{[^}]*\})'
+                        
+                        # Comment out existing root-level rewrite block if found
+                        if re.search(rewrite_pattern, vhostContent, re.MULTILINE | re.DOTALL):
+                            vhostContent = re.sub(rewrite_pattern, 
+                                lambda m: '# Commented out during suspension\n#' + m.group(0).replace('\n', '\n#'), 
+                                vhostContent, 
+                                flags=re.MULTILINE | re.DOTALL)
+                        
+                        # Add suspension configuration at the beginning
+                        modifiedContent = suspensionConf + "\n" + vhostContent
+                        
+                        # Write directly to vhost file
+                        with open(vhostConfPath, 'w') as f:
+                            f.write(modifiedContent)
+                        
+                        # Set proper ownership
+                        command = f"chown lsadm:lsadm {vhostConfPath}"
+                        ProcessUtilities.executioner(command)
+                except IOError as e:
+                    # If direct file access fails, fall back to command-based approach
+                    command = f"cat {vhostConfPath}"
+                    vhostContent = ProcessUtilities.outputExecutioner(command)
+                    
+                    if vhostContent and "# Website Suspension Configuration" not in vhostContent:
+                        # Check if there's an existing rewrite block at the root level
+                        # If so, we need to comment it out to avoid conflicts
+                        
+                        # Pattern to find root-level rewrite block
+                        rewrite_pattern = r'^(rewrite\s*\{[^}]*\})'
+                        
+                        # Comment out existing root-level rewrite block if found
+                        if re.search(rewrite_pattern, vhostContent, re.MULTILINE | re.DOTALL):
+                            vhostContent = re.sub(rewrite_pattern, 
+                                lambda m: '# Commented out during suspension\n#' + m.group(0).replace('\n', '\n#'), 
+                                vhostContent, 
+                                flags=re.MULTILINE | re.DOTALL)
+                        
+                        modifiedContent = suspensionConf + "\n" + vhostContent
+                        
+                        # Use temp file in /tmp
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(mode='w', delete=False, prefix='cyberpanel_') as tmpfile:
+                            tmpfile.write(modifiedContent)
+                            tempFile = tmpfile.name
+                        
+                        # Copy to vhost configuration
+                        command = f"cp {tempFile} {vhostConfPath}"
+                        ProcessUtilities.executioner(command)
+                        
+                        # Set proper ownership
+                        command = f"chown lsadm:lsadm {vhostConfPath}"
+                        ProcessUtilities.executioner(command)
+                        
+                        # Remove temporary file
+                        try:
+                            os.remove(tempFile)
+                        except:
+                            pass
+                
+                # Apply same suspension configuration to child domains
+                childDomains = website.childdomains_set.all()
+                
+                for items in childDomains:
+                    childConfPath = virtualHostUtilities.Server_root + "/conf/vhosts/" + items.domain
+                    childVhostConfPath = childConfPath + "/vhost.conf"
+                    
+                    try:
+                        # Try direct file access first
+                        try:
+                            with open(childVhostConfPath, 'r') as f:
+                                childVhostContent = f.read()
+                            
+                            if "# Website Suspension Configuration" not in childVhostContent:
+                                childModifiedContent = suspensionConf + "\n" + childVhostContent
+                                
+                                with open(childVhostConfPath, 'w') as f:
+                                    f.write(childModifiedContent)
+                                
+                                command = f"chown lsadm:lsadm {childVhostConfPath}"
+                                ProcessUtilities.executioner(command)
+                        except IOError:
+                            # Fall back to command-based approach
+                            command = f"cat {childVhostConfPath}"
+                            childVhostContent = ProcessUtilities.outputExecutioner(command)
+                            
+                            if childVhostContent and "# Website Suspension Configuration" not in childVhostContent:
+                                childModifiedContent = suspensionConf + "\n" + childVhostContent
+                                
+                                import tempfile
+                                with tempfile.NamedTemporaryFile(mode='w', delete=False, prefix='cyberpanel_child_') as tmpfile:
+                                    tmpfile.write(childModifiedContent)
+                                    childTempFile = tmpfile.name
+                                
+                                command = f"cp {childTempFile} {childVhostConfPath}"
+                                ProcessUtilities.executioner(command)
+                                
+                                command = f"chown lsadm:lsadm {childVhostConfPath}"
+                                ProcessUtilities.executioner(command)
+                                
+                                try:
+                                    os.remove(childTempFile)
+                                except:
+                                    pass
+                    except Exception as e:
+                        CyberCPLogFileWriter.writeToFile(f"Error suspending child domain {items.domain}: {str(e)}")
+                
                 installUtilities.reStartLiteSpeedSocket()
                 website.state = 0
             else:
                 confPath = virtualHostUtilities.Server_root + "/conf/vhosts/" + websiteName
-
-                command = "mv " + confPath + "-suspended" + " " + confPath
-                ProcessUtilities.executioner(command)
-
-                command = "chown -R " + "lsadm" + ":" + "lsadm" + " " + confPath
-                ProcessUtilities.popenExecutioner(command)
-
+                vhostConfPath = confPath + "/vhost.conf"
+                
+                try:
+                    # Try direct file access first
+                    with open(vhostConfPath, 'r') as f:
+                        vhostContent = f.read()
+                    
+                    if "# Website Suspension Configuration" in vhostContent:
+                        # Use regex to remove the suspension configuration block
+                        pattern = r'# Website Suspension Configuration.*?# End Website Suspension Configuration\n'
+                        modifiedContent = re.sub(pattern, '', vhostContent, flags=re.DOTALL)
+                        
+                        # Restore any rewrite blocks that were commented out during suspension
+                        commented_rewrite_pattern = r'# Commented out during suspension\n((?:#[^\n]*\n)+)'
+                        
+                        def restore_commented_block(match):
+                            commented_block = match.group(1)
+                            # Remove the leading # from each line
+                            restored_block = '\n'.join(line[1:] if line.startswith('#') else line 
+                                                     for line in commented_block.splitlines())
+                            return restored_block
+                        
+                        if re.search(commented_rewrite_pattern, modifiedContent):
+                            modifiedContent = re.sub(commented_rewrite_pattern,
+                                                   restore_commented_block,
+                                                   modifiedContent)
+                        
+                        with open(vhostConfPath, 'w') as f:
+                            f.write(modifiedContent)
+                        
+                        command = f"chown lsadm:lsadm {vhostConfPath}"
+                        ProcessUtilities.executioner(command)
+                except IOError:
+                    # Fall back to command-based approach
+                    command = f"cat {vhostConfPath}"
+                    vhostContent = ProcessUtilities.outputExecutioner(command)
+                    
+                    if vhostContent and "# Website Suspension Configuration" in vhostContent:
+                        pattern = r'# Website Suspension Configuration.*?# End Website Suspension Configuration\n'
+                        modifiedContent = re.sub(pattern, '', vhostContent, flags=re.DOTALL)
+                        
+                        # Restore any rewrite blocks that were commented out during suspension
+                        commented_rewrite_pattern = r'# Commented out during suspension\n((?:#[^\n]*\n)+)'
+                        
+                        def restore_commented_block(match):
+                            commented_block = match.group(1)
+                            # Remove the leading # from each line
+                            restored_block = '\n'.join(line[1:] if line.startswith('#') else line 
+                                                     for line in commented_block.splitlines())
+                            return restored_block
+                        
+                        if re.search(commented_rewrite_pattern, modifiedContent):
+                            modifiedContent = re.sub(commented_rewrite_pattern,
+                                                   restore_commented_block,
+                                                   modifiedContent)
+                        
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(mode='w', delete=False, prefix='cyberpanel_') as tmpfile:
+                            tmpfile.write(modifiedContent)
+                            tempFile = tmpfile.name
+                        
+                        command = f"cp {tempFile} {vhostConfPath}"
+                        ProcessUtilities.executioner(command)
+                        
+                        command = f"chown lsadm:lsadm {vhostConfPath}"
+                        ProcessUtilities.executioner(command)
+                        
+                        try:
+                            os.remove(tempFile)
+                        except:
+                            pass
+                
+                # Remove suspension configuration from child domains
                 childDomains = website.childdomains_set.all()
-
+                
                 for items in childDomains:
-                    confPath = virtualHostUtilities.Server_root + "/conf/vhosts/" + items.domain
-
-                    command = "mv " + confPath + "-suspended" + " " + confPath
-                    ProcessUtilities.executioner(command)
-
-                    command = "chown -R " + "lsadm" + ":" + "lsadm" + " " + confPath
-                    ProcessUtilities.popenExecutioner(command)
-
+                    childConfPath = virtualHostUtilities.Server_root + "/conf/vhosts/" + items.domain
+                    childVhostConfPath = childConfPath + "/vhost.conf"
+                    
+                    try:
+                        # Try direct file access first
+                        try:
+                            with open(childVhostConfPath, 'r') as f:
+                                childVhostContent = f.read()
+                            
+                            if "# Website Suspension Configuration" in childVhostContent:
+                                pattern = r'# Website Suspension Configuration.*?# End Website Suspension Configuration\n'
+                                childModifiedContent = re.sub(pattern, '', childVhostContent, flags=re.DOTALL)
+                                
+                                with open(childVhostConfPath, 'w') as f:
+                                    f.write(childModifiedContent)
+                                
+                                command = f"chown lsadm:lsadm {childVhostConfPath}"
+                                ProcessUtilities.executioner(command)
+                        except IOError:
+                            # Fall back to command-based approach
+                            command = f"cat {childVhostConfPath}"
+                            childVhostContent = ProcessUtilities.outputExecutioner(command)
+                            
+                            if childVhostContent and "# Website Suspension Configuration" in childVhostContent:
+                                pattern = r'# Website Suspension Configuration.*?# End Website Suspension Configuration\n'
+                                childModifiedContent = re.sub(pattern, '', childVhostContent, flags=re.DOTALL)
+                                
+                                import tempfile
+                                with tempfile.NamedTemporaryFile(mode='w', delete=False, prefix='cyberpanel_child_') as tmpfile:
+                                    tmpfile.write(childModifiedContent)
+                                    childTempFile = tmpfile.name
+                                
+                                command = f"cp {childTempFile} {childVhostConfPath}"
+                                ProcessUtilities.executioner(command)
+                                
+                                command = f"chown lsadm:lsadm {childVhostConfPath}"
+                                ProcessUtilities.executioner(command)
+                                
+                                try:
+                                    os.remove(childTempFile)
+                                except:
+                                    pass
+                    except Exception as e:
+                        CyberCPLogFileWriter.writeToFile(f"Error unsuspending child domain {items.domain}: {str(e)}")
+                
                 installUtilities.reStartLiteSpeedSocket()
                 website.state = 1
 
@@ -2808,8 +3126,8 @@ class WebsiteManager:
             json_data = json.dumps(data_ret)
             return HttpResponse(json_data)
 
-        except BaseException as msg:
-
+        except Exception as msg:
+            CyberCPLogFileWriter.writeToFile(f"Error in submitWebsiteStatus: {str(msg)}")
             data_ret = {'websiteStatus': 0, 'error_message': str(msg)}
             json_data = json.dumps(data_ret)
             return HttpResponse(json_data)
@@ -2978,6 +3296,12 @@ class WebsiteManager:
 
             modifyWeb.save()
 
+            ## Update disk quota when package changes - Fix for GitHub issue #1442
+            if webpack.enforceDiskLimits:
+                spaceString = f'{webpack.diskSpace}M {webpack.diskSpace}M'
+                command = f'setquota -u {modifyWeb.externalApp} {spaceString} 0 0 /'
+                ProcessUtilities.executioner(command)
+
             ## Fix https://github.com/usmannasir/cyberpanel/issues/998
 
             # from plogical.IncScheduler import IncScheduler
@@ -3013,6 +3337,8 @@ class WebsiteManager:
 
             Data = {}
 
+            from plogical.processUtilities import ProcessUtilities
+
             marketingStatus = emACL.checkIfEMEnabled(admin.userName)
 
             Data['marketingStatus'] = marketingStatus
@@ -3040,6 +3366,7 @@ class WebsiteManager:
             Data['diskInMBTotal'] = website.package.diskSpace
 
             Data['phps'] = PHPManager.findPHPVersions()
+            import os
 
             servicePath = '/home/cyberpanel/postfix'
             if os.path.exists(servicePath):
@@ -3077,6 +3404,142 @@ class WebsiteManager:
                 Data['ftp'] = 1
             else:
                 Data['ftp'] = 0
+
+            # Add-on check logic (copied from sshAccess)
+            url = "https://platform.cyberpersons.com/CyberpanelAdOns/Adonpermission"
+            addon_data = {
+                "name": "all",
+                "IP": ACLManager.GetServerIP()
+            }
+            import requests
+            import json
+            try:
+                response = requests.post(url, data=json.dumps(addon_data))
+                Status = response.json().get('status', 0)
+            except Exception:
+                Status = 0
+            Data['has_addons'] = bool((Status == 1) or ProcessUtilities.decideServer() == ProcessUtilities.ent)
+
+            # SSL check (self-signed logic)
+            cert_path = '/etc/letsencrypt/live/%s/fullchain.pem' % (self.domain)
+            is_selfsigned = False
+            ssl_issue_link = '/manageSSL/sslForHostName'
+            try:
+                import OpenSSL
+                with open(cert_path, 'r') as f:
+                    pem_data = f.read()
+                cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, pem_data)
+                # Only check the first cert in the PEM
+                issuer_org = None
+                for k, v in cert.get_issuer().get_components():
+                    if k.decode() == 'O':
+                        issuer_org = v.decode()
+                        break
+                if issuer_org == 'Denial':
+                    is_selfsigned = True
+                else:
+                    is_selfsigned = False
+            except Exception:
+                is_selfsigned = True  # If cert missing or unreadable, treat as self-signed
+            Data['is_selfsigned_ssl'] = bool(is_selfsigned)
+            Data['ssl_issue_link'] = ssl_issue_link
+            
+
+            # Detect if accessed via IP
+            from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter
+            accessed_via_ip = False
+            try:
+                host = request.get_host().split(':')[0]  # Remove port if present
+                try:
+                    ipaddress.ip_address(host)
+                    accessed_via_ip = True
+                except ValueError:
+                    accessed_via_ip = False
+            except Exception as e:
+                accessed_via_ip = False
+                CyberCPLogFileWriter.writeToFile(f"Error detecting accessed_via_ip: {str(e)}")
+
+            Data['accessed_via_ip'] = bool(accessed_via_ip)
+
+            #### update jwt secret if needed
+
+            import secrets
+
+            fastapi_file = '/usr/local/CyberCP/fastapi_ssh_server.py'
+            from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter
+            try:
+                
+                content = ProcessUtilities.outputExecutioner(f'cat {fastapi_file}')
+                if 'REPLACE_ME_WITH_INSTALLER' in content:
+                    new_secret = secrets.token_urlsafe(32)
+                    
+                    sed_cmd = f"sed -i 's|JWT_SECRET = \"REPLACE_ME_WITH_INSTALLER\"|JWT_SECRET = \"{new_secret}\"|' '{fastapi_file}'"
+                    ProcessUtilities.outputExecutioner(sed_cmd)
+                    
+                    command = 'systemctl restart fastapi_ssh_server'
+                    ProcessUtilities.outputExecutioner(command)
+            except Exception:
+                CyberCPLogFileWriter.writeLog(f"Failed to update JWT secret: {e}")
+                pass
+
+            #####
+
+            #####
+
+            from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter
+            # Ensure FastAPI SSH server systemd service file is in place
+            try:
+                service_path = '/etc/systemd/system/fastapi_ssh_server.service'
+                local_service_path = 'fastapi_ssh_server.service'
+                check_service = ProcessUtilities.outputExecutioner(f'test -f {service_path} && echo exists || echo missing')
+                if 'missing' in check_service:
+                    ProcessUtilities.outputExecutioner(f'cp /usr/local/CyberCP/fastapi_ssh_server.service {service_path}')
+                    ProcessUtilities.outputExecutioner('systemctl daemon-reload')
+            except Exception as e:
+                CyberCPLogFileWriter.writeLog(f"Failed to copy or reload fastapi_ssh_server.service: {e}")
+            
+
+            #####
+
+            # Ensure FastAPI SSH server is running using ProcessUtilities
+            try:
+                ProcessUtilities.outputExecutioner('systemctl is-active --quiet fastapi_ssh_server')
+                ProcessUtilities.outputExecutioner('systemctl enable --now fastapi_ssh_server')
+                ProcessUtilities.outputExecutioner('systemctl start fastapi_ssh_server')
+
+                csfPath = '/etc/csf'
+
+                sshPort = '8888'
+
+                if os.path.exists(csfPath):
+                        dataIn = {'protocol': 'TCP_IN', 'ports': sshPort}
+
+                        # self.modifyPorts is a method in the firewallManager.py file so how can we call it here?
+                        # we need to call the method from the firewallManager.py file
+                        from firewall.firewallManager import FirewallManager
+                        firewallManager = FirewallManager()
+                        firewallManager.modifyPorts(dataIn)
+                        dataIn = {'protocol': 'TCP_OUT', 'ports': sshPort}
+                        firewallManager.modifyPorts(dataIn)
+                else:
+                    from plogical.firewallUtilities import FirewallUtilities
+                    from firewall.models import FirewallRules
+                    try:
+                        updateFW = FirewallRules.objects.get(name="WebTerminalPort")
+                        FirewallUtilities.deleteRule("tcp", updateFW.port, "0.0.0.0/0")
+                        updateFW.port = sshPort
+                        updateFW.save()
+                        FirewallUtilities.addRule('tcp', sshPort, "0.0.0.0/0")
+                    except:
+                        try:
+                            newFireWallRule = FirewallRules(name="WebTerminalPort", port=sshPort, proto="tcp")
+                            newFireWallRule.save()
+                            FirewallUtilities.addRule('tcp', sshPort, "0.0.0.0/0")
+                        except BaseException as msg:
+                            CyberCPLogFileWriter.writeToFile(str(msg))
+
+            except Exception as e:
+                CyberCPLogFileWriter.writeLog(f"Failed to ensure fastapi_ssh_server is running: {e}")
 
             proc = httpProc(request, 'websiteFunctions/website.html', Data)
             return proc.render()
@@ -3325,6 +3788,13 @@ class WebsiteManager:
 
         configData = data['configData']
         self.domain = data['virtualHost']
+
+        if len(configData) == 0:
+            status = {"configstatus": 0, 'error_message': 'Error: you are trying to save empty vhost file, your website will stop working.'}
+
+            final_json = json.dumps(status)
+            return HttpResponse(final_json)
+
 
         command = 'cat %s' % ('/usr/local/lsws/conf/dvhost_redis.conf')
 
@@ -4507,6 +4977,14 @@ StrictHostKeyChecking no
             if data['home'] == '0':
                 extraArgs['path'] = data['path']
 
+            #### Before installing Prestashop change php to 8.3
+
+            completePathToConfigFile = f'/usr/local/lsws/conf/vhosts/{self.domain}/vhost.conf'
+
+            execPath = "/usr/local/CyberCP/bin/python " + virtualHostUtilities.cyberPanel + "/plogical/virtualHostUtilities.py"
+            execPath = execPath + " changePHP --phpVersion 'PHP 8.3' --path " + completePathToConfigFile
+            ProcessUtilities.executioner(execPath)
+
             background = ApplicationInstaller('prestashop', extraArgs)
             background.start()
 
@@ -4533,10 +5011,15 @@ StrictHostKeyChecking no
             websiteOwner = data['websiteOwner']
             ownerPassword = data['ownerPassword']
             data['ssl'] = 1
-            data['dkimCheck'] = 0
+            data['dkimCheck'] = 1
             data['openBasedir'] = 1
             data['adminEmail'] = data['ownerEmail']
-            data['phpSelection'] = "PHP 7.4"
+
+            try:
+                data['phpSelection'] = data['phpSelection']
+            except:
+                data['phpSelection'] = "PHP 7.4"
+
             data['package'] = data['packageName']
             try:
                 websitesLimit = data['websitesLimit']
@@ -4582,8 +5065,7 @@ StrictHostKeyChecking no
 
         websites = ACLManager.searchWebsiteObjects(currentlACL, userID, searchTerm)
 
-        json_data = "["
-        checker = 0
+        json_data = []
 
         try:
             ipFile = "/etc/cyberpanel/machineIP"
@@ -4602,20 +5084,46 @@ StrictHostKeyChecking no
 
             DiskUsage, DiskUsagePercentage, bwInMB, bwUsage = virtualHostUtilities.FindStats(items)
 
+            vhFile = f'/usr/local/lsws/conf/vhosts/{items.domain}/vhost.conf'
+
+            if os.path.exists(ProcessUtilities.debugPath):
+                logging.CyberCPLogFileWriter.writeToFile(vhFile)
+
+            try:
+                from plogical.phpUtilities import phpUtilities
+                PHPVersionActual = phpUtilities.WrapGetPHPVersionFromFileToGetVersionWithPHP(vhFile)
+            except:
+                PHPVersionActual = 'PHP 8.1'
+
             diskUsed = "%sMB" % str(DiskUsage)
-            dic = {'domain': items.domain, 'adminEmail': items.adminEmail, 'ipAddress': ipAddress,
-                   'admin': items.admin.userName, 'package': items.package.packageName, 'state': state,
-                   'diskUsed': diskUsed}
 
-            if checker == 0:
-                json_data = json_data + json.dumps(dic)
-                checker = 1
-            else:
-                json_data = json_data + ',' + json.dumps(dic)
+            # Get WordPress sites for this website
+            wp_sites = []
+            try:
+                wp_sites = WPSites.objects.filter(owner=items)
+                wp_sites = [{
+                    'id': wp.id,
+                    'title': wp.title,
+                    'url': wp.FinalURL,
+                    'version': wp.version if hasattr(wp, 'version') else 'Unknown',
+                    'phpVersion': wp.phpVersion if hasattr(wp, 'phpVersion') else 'Unknown'
+                } for wp in wp_sites]
+            except:
+                pass
 
-        json_data = json_data + ']'
+            json_data.append({
+                'domain': items.domain,
+                'adminEmail': items.adminEmail,
+                'ipAddress': ipAddress,
+                'admin': items.admin.userName,
+                'package': items.package.packageName,
+                'state': state,
+                'diskUsed': diskUsed,
+                'phpVersion': PHPVersionActual,
+                'wp_sites': wp_sites
+            })
 
-        return json_data
+        return json.dumps(json_data)
 
     def findWebsitesJson(self, currentACL, userID, pageNumber):
         finalPageNumber = ((pageNumber * 10)) - 10
@@ -4778,7 +5286,6 @@ StrictHostKeyChecking no
             return ACLManager.loadErrorJson()
 
         tempStatusPath = "/home/cyberpanel/" + str(randint(1000, 9999))
-
         execPath = "/usr/local/CyberCP/bin/python " + virtualHostUtilities.cyberPanel + "/plogical/virtualHostUtilities.py"
         execPath = execPath + " switchServer --phpVersion '" + phpVersion + "' --server " + str(
             server) + " --virtualHostName " + domainName + " --tempStatusPath " + tempStatusPath
@@ -4904,8 +5411,136 @@ StrictHostKeyChecking no
         website = Websites.objects.get(domain=self.domain)
         externalApp = website.externalApp
 
+        #### update jwt secret if needed
+
+        import secrets
+        import re
+        import os
+        from plogical.processUtilities import ProcessUtilities
+
+        fastapi_file = '/usr/local/CyberCP/fastapi_ssh_server.py'
+        from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter
+        try:
+            
+            content = ProcessUtilities.outputExecutioner(f'cat {fastapi_file}')
+            if 'REPLACE_ME_WITH_INSTALLER' in content:
+                new_secret = secrets.token_urlsafe(32)
+                
+                sed_cmd = f"sed -i 's|JWT_SECRET = \"REPLACE_ME_WITH_INSTALLER\"|JWT_SECRET = \"{new_secret}\"|' '{fastapi_file}'"
+                ProcessUtilities.outputExecutioner(sed_cmd)
+                
+                command = 'systemctl restart fastapi_ssh_server'
+                ProcessUtilities.outputExecutioner(command)
+        except Exception:
+            CyberCPLogFileWriter.writeLog(f"Failed to update JWT secret: {e}")
+            pass
+
+        #####
+
+        from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter
+        # Ensure FastAPI SSH server systemd service file is in place
+        try:
+            service_path = '/etc/systemd/system/fastapi_ssh_server.service'
+            local_service_path = 'fastapi_ssh_server.service'
+            check_service = ProcessUtilities.outputExecutioner(f'test -f {service_path} && echo exists || echo missing')
+            if 'missing' in check_service:
+                ProcessUtilities.outputExecutioner(f'cp /usr/local/CyberCP/fastapi_ssh_server.service {service_path}')
+                ProcessUtilities.outputExecutioner('systemctl daemon-reload')
+        except Exception as e:
+            CyberCPLogFileWriter.writeLog(f"Failed to copy or reload fastapi_ssh_server.service: {e}")
+
+        # Ensure FastAPI SSH server is running using ProcessUtilities
+        try:
+            ProcessUtilities.outputExecutioner('systemctl is-active --quiet fastapi_ssh_server')
+            ProcessUtilities.outputExecutioner('systemctl enable --now fastapi_ssh_server')
+            ProcessUtilities.outputExecutioner('systemctl start fastapi_ssh_server')
+
+            csfPath = '/etc/csf'
+
+            sshPort = '8888'
+
+            if os.path.exists(csfPath):
+                    dataIn = {'protocol': 'TCP_IN', 'ports': sshPort}
+
+                    # self.modifyPorts is a method in the firewallManager.py file so how can we call it here?
+                    # we need to call the method from the firewallManager.py file
+                    from firewall.firewallManager import FirewallManager
+                    firewallManager = FirewallManager()
+                    firewallManager.modifyPorts(dataIn)
+                    dataIn = {'protocol': 'TCP_OUT', 'ports': sshPort}
+                    firewallManager.modifyPorts(dataIn)
+            else:
+                from plogical.firewallUtilities import FirewallUtilities
+                from firewall.models import FirewallRules
+                try:
+                    updateFW = FirewallRules.objects.get(name="WebTerminalPort")
+                    FirewallUtilities.deleteRule("tcp", updateFW.port, "0.0.0.0/0")
+                    updateFW.port = sshPort
+                    updateFW.save()
+                    FirewallUtilities.addRule('tcp', sshPort, "0.0.0.0/0")
+                except:
+                    try:
+                        newFireWallRule = FirewallRules(name="WebTerminalPort", port=sshPort, proto="tcp")
+                        newFireWallRule.save()
+                        FirewallUtilities.addRule('tcp', sshPort, "0.0.0.0/0")
+                    except BaseException as msg:
+                        CyberCPLogFileWriter.writeToFile(str(msg))
+
+        except Exception as e:
+            CyberCPLogFileWriter.writeLog(f"Failed to ensure fastapi_ssh_server is running: {e}")
+
+        # Add-on check logic
+        url = "https://platform.cyberpersons.com/CyberpanelAdOns/Adonpermission"
+        data = {
+            "name": "all",
+            "IP": ACLManager.GetServerIP()
+        }
+        import requests
+        import json
+        try:
+            response = requests.post(url, data=json.dumps(data))
+            Status = response.json().get('status', 0)
+        except Exception:
+            Status = 0
+        has_addons = (Status == 1) or ProcessUtilities.decideServer() == ProcessUtilities.ent
+
+        from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter
+
+        #CyberCPLogFileWriter.writeToFile(f"has_addons: {has_addons}")
+
+        # SSL check
+        cert_path = '/usr/local/lscp/conf/cert.pem'
+        is_selfsigned = False
+        ssl_issue_link = '/manageSSL/sslForHostName'
+        try:
+            import OpenSSL
+            cert_content = ProcessUtilities.outputExecutioner(f'cat {cert_path}')
+            cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert_content)
+            ssl_provider = cert.get_issuer().get_components()[1][1].decode('utf-8')
+            CyberCPLogFileWriter.writeToFile(f"ssl_provider: {ssl_provider}")
+            if ssl_provider == 'Denial':
+                is_selfsigned = True
+            else:
+                is_selfsigned = False
+        except Exception as e:
+            is_selfsigned = True  # If cert missing or unreadable, treat as self-signed
+            CyberCPLogFileWriter.writeToFile(f"is_selfsigned: {is_selfsigned}. Error: {str(e)}")
+
+        # Detect if accessed via IP
+        accessed_via_ip = False
+        try:
+            host = request.get_host().split(':')[0]  # Remove port if present
+            try:
+                ipaddress.ip_address(host)
+                accessed_via_ip = True
+            except ValueError:
+                accessed_via_ip = False
+        except Exception as e:
+            accessed_via_ip = False
+            CyberCPLogFileWriter.writeToFile(f"Error detecting accessed_via_ip: {str(e)}")
+
         proc = httpProc(request, 'websiteFunctions/sshAccess.html',
-                        {'domainName': self.domain, 'externalApp': externalApp})
+                        {'domainName': self.domain, 'externalApp': externalApp, 'has_addons': has_addons, 'is_selfsigned_ssl': is_selfsigned, 'ssl_issue_link': ssl_issue_link, 'accessed_via_ip': accessed_via_ip})
         return proc.render()
 
     def saveSSHAccessChanges(self, userID=None, data=None):
@@ -6581,11 +7216,15 @@ StrictHostKeyChecking no
 
             key = data['key']
             pathToKeyFile = "/home/%s/.ssh/authorized_keys" % (domain)
+            website = Websites.objects.get(domain=domain)
+
+            command = f'chown {website.externalApp}:{website.externalApp} {pathToKeyFile}'
+            ProcessUtilities.outputExecutioner(command)
 
             execPath = "/usr/local/CyberCP/bin/python " + virtualHostUtilities.cyberPanel + "/plogical/firewallUtilities.py"
             execPath = execPath + " deleteSSHKey --key '%s' --path %s" % (key, pathToKeyFile)
 
-            output = ProcessUtilities.outputExecutioner(execPath)
+            output = ProcessUtilities.outputExecutioner(execPath, website.externalApp)
 
             if output.find("1,None") > -1:
                 final_dic = {'status': 1, 'delete_status': 1}
@@ -6658,6 +7297,7 @@ StrictHostKeyChecking no
             return ACLManager.loadError()
 
         phps = PHPManager.findPHPVersions()
+        apachePHPs = PHPManager.findApachePHPVersions()
 
         if ACLManager.CheckForPremFeature('all'):
             apachemanager = 1
@@ -6665,7 +7305,7 @@ StrictHostKeyChecking no
             apachemanager = 0
 
         proc = httpProc(request, 'websiteFunctions/ApacheManager.html',
-                        {'domainName': self.domain, 'phps': phps, 'apachemanager': apachemanager})
+                        {'domainName': self.domain, 'phps': phps, 'apachemanager': apachemanager, 'apachePHPs': apachePHPs})
         return proc.render()
 
     def saveApacheConfigsToFile(self, userID=None, data=None):
@@ -6756,29 +7396,41 @@ StrictHostKeyChecking no
         return proc.render()
 
     def CreateDockersite(self, request=None, userID=None, data=None):
-        adminNames = ACLManager.loadAllUsers(userID)
-        Data = {'adminNames': adminNames}
+        url = "https://platform.cyberpersons.com/CyberpanelAdOns/Adonpermission"
+        data = {
+            "name": "docker-manager",
+            "IP": ACLManager.GetServerIP()
+        }
 
+        import requests
+        response = requests.post(url, data=json.dumps(data))
+        Status = response.json()['status']
 
-        if PackageAssignment.objects.all().count() == 0:
+        if (Status == 1) or ProcessUtilities.decideServer() == ProcessUtilities.ent:
+            adminNames = ACLManager.loadAllUsers(userID)
+            Data = {'adminNames': adminNames}
 
-            name = 'Default'
-            cpu = 2
-            Memory = 1024
-            Bandwidth = '100'
-            disk = '100'
+            if PackageAssignment.objects.all().count() == 0:
+                name = 'Default'
+                cpu = 2
+                Memory = 1024
+                Bandwidth = '100'
+                disk = '100'
 
-            saveobj = DockerPackages(Name=name, CPUs=cpu, Ram=Memory, Bandwidth=Bandwidth, DiskSpace=disk, config='')
-            saveobj.save()
+                saveobj = DockerPackages(Name=name, CPUs=cpu, Ram=Memory, Bandwidth=Bandwidth, DiskSpace=disk, config='')
+                saveobj.save()
 
-            userobj = Administrator.objects.get(pk=1)
+                userobj = Administrator.objects.get(pk=1)
 
-            sv = PackageAssignment(user=userobj, package=saveobj)
-            sv.save()
+                sv = PackageAssignment(user=userobj, package=saveobj)
+                sv.save()
 
-        proc = httpProc(request, 'websiteFunctions/CreateDockerSite.html',
-                        Data, 'createWebsite')
-        return proc.render()
+            proc = httpProc(request, 'websiteFunctions/CreateDockerSite.html',
+                            Data, 'createWebsite')
+            return proc.render()
+        else:
+            from django.shortcuts import reverse
+            return redirect(reverse('pricing'))
 
     def AddDockerpackage(self, userID=None, data=None):
         try:
@@ -7084,17 +7736,180 @@ StrictHostKeyChecking no
             return HttpResponse(final_json)
 
     def Dockersitehome(self, request=None, userID=None, data=None, DeleteID=None):
+        url = "https://platform.cyberpersons.com/CyberpanelAdOns/Adonpermission"
+        data = {
+            "name": "docker-manager",
+            "IP": ACLManager.GetServerIP()
+        }
 
-        currentACL = ACLManager.loadedACL(userID)
-        admin = Administrator.objects.get(pk=userID)
+        import requests
+        response = requests.post(url, data=json.dumps(data))
+        Status = response.json()['status']
 
-        ds = DockerSites.objects.get(pk=self.domain)
+        if (Status == 1) or ProcessUtilities.decideServer() == ProcessUtilities.ent:
+            currentACL = ACLManager.loadedACL(userID)
+            admin = Administrator.objects.get(pk=userID)
 
-        if ACLManager.checkOwnership(ds.admin.domain, admin, currentACL) == 1:
-            pass
+            ds = DockerSites.objects.get(pk=self.domain)
+
+            if ACLManager.checkOwnership(ds.admin.domain, admin, currentACL) == 1:
+                pass
+            else:
+                return ACLManager.loadError()
+
+            proc = httpProc(request, 'websiteFunctions/DockerSiteHome.html',
+                            {'dockerSite': ds})
+            return proc.render()
         else:
-            return ACLManager.loadError()
+            from django.shortcuts import reverse
+            return redirect(reverse('pricing'))
+        
+    def fetchWPSitesForDomain(self, userID=None, data=None):
+        try:
+            currentACL = ACLManager.loadedACL(userID)
+            admin = Administrator.objects.get(pk=userID)
+            
+            domain = data['domain']
+            website = Websites.objects.get(domain=domain)
+            
+            if ACLManager.checkOwnership(domain, admin, currentACL) != 1:
+                return ACLManager.loadErrorJson('fetchStatus', 0)
 
-        proc = httpProc(request, 'websiteFunctions/DockerSiteHome.html',
-                        {'dockerSite': ds})
-        return proc.render()
+            wp_sites = WPSites.objects.filter(owner=website)
+            sites = []
+            
+            Vhuser = website.externalApp
+            PHPVersion = website.phpSelection
+
+            php = ACLManager.getPHPString(PHPVersion)
+            FinalPHPPath = '/usr/local/lsws/lsphp%s/bin/php' % (php)
+            
+            for site in wp_sites:
+                command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp core version --skip-plugins --skip-themes --path=%s 2>/dev/null' % (
+                    Vhuser, FinalPHPPath, site.path)
+                version = ProcessUtilities.outputExecutioner(command, None, True)
+                version = html.escape(version)
+
+                # Get current theme
+                command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp theme list --status=active --field=name --skip-plugins --skip-themes --path=%s 2>/dev/null' % (
+                    Vhuser, FinalPHPPath, site.path)
+                currentTheme = ProcessUtilities.outputExecutioner(command, None, True)
+                currentTheme = currentTheme.strip()
+
+                # Get number of plugins
+                command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp plugin list --field=name --skip-plugins --skip-themes --path=%s 2>/dev/null' % (
+                    Vhuser, FinalPHPPath, site.path)
+                plugins = ProcessUtilities.outputExecutioner(command, None, True)
+                pluginCount = len([p for p in plugins.split('\n') if p.strip()])
+
+                # Generate screenshot URL
+                site_url = site.FinalURL
+                if not site_url.startswith(('http://', 'https://')):
+                    site_url = f'https://{site_url}'
+
+
+                command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp config list --skip-plugins --skip-themes --path=%s' % (
+                Vhuser, FinalPHPPath, site.path)
+                stdout = ProcessUtilities.outputExecutioner(command)
+                debugging = 0
+                for items in stdout.split('\n'):
+                    if items.find('WP_DEBUG	true	constant') > -1:
+                        debugging = 1
+                        break
+
+                command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp option get blog_public --skip-plugins --skip-themes --path=%s' % (
+                    Vhuser, FinalPHPPath, site.path)
+                stdoutput = ProcessUtilities.outputExecutioner(command)
+                searchindex = int(stdoutput.splitlines()[-1])
+                
+
+                command = 'sudo -u %s %s -d error_reporting=0 /usr/bin/wp maintenance-mode status --skip-plugins --skip-themes --path=%s' % (
+                    Vhuser, FinalPHPPath, site.path)
+                maintenanceMod = ProcessUtilities.outputExecutioner(command)
+
+                result = maintenanceMod.splitlines()[-1]
+                if result.find('not active') > -1:
+                    maintenanceMode = 0
+                else:
+                    maintenanceMode = 1
+
+                sites.append({
+                    'id': site.id,
+                    'title': site.title,
+                    'url': site.FinalURL,
+                    'path': site.path,
+                    'version': version,
+                    'phpVersion': site.owner.phpSelection,
+                    'theme': currentTheme,
+                    'activePlugins': pluginCount,
+                    'debugging': debugging,
+                    'searchIndex': searchindex,
+                    'maintenanceMode': maintenanceMode,
+                    'screenshot': f'https://api.microlink.io/?url={site_url}&screenshot=true&meta=false&embed=screenshot.url'
+                })
+                
+            data_ret = {'status': 1, 'fetchStatus': 1, 'error_message': "None", "sites": sites}
+            json_data = json.dumps(data_ret)
+            return HttpResponse(json_data)
+
+        except BaseException as msg:
+            data_ret = {'status': 0, 'fetchStatus': 0, 'error_message': str(msg)}
+            json_data = json.dumps(data_ret)
+            return HttpResponse(json_data)
+
+    def fetchWPBackups(self, userID=None, data=None):
+        try:
+            currentACL = ACLManager.loadedACL(userID)
+            admin = Administrator.objects.get(pk=userID)
+            WPid = data['WPid']
+            
+            # Get the WordPress site
+            wpsite = WPSites.objects.get(pk=WPid)
+            
+            # Check ownership
+            if currentACL['admin'] != 1:
+                if wpsite.owner != admin:
+                    data_ret = {'status': 0, 'error_message': 'Not authorized to view this site backups'}
+                    json_data = json.dumps(data_ret)
+                    return HttpResponse(json_data)
+            
+            # Get backups for this WordPress site
+            backups = WPSitesBackup.objects.filter(WPSiteID=WPid).order_by('-id')
+            
+            backup_list = []
+            for backup in backups:
+                try:
+                    config = json.loads(backup.config)
+                    # Extract date from backup name (format: backup-wpsite.com-11.28.23_01-12-36)
+                    backup_name = config.get('name', 'Unknown')
+                    date_str = 'Unknown'
+                    if 'backup-' in backup_name:
+                        try:
+                            # Extract date part from name
+                            date_part = backup_name.split('-')[-1]  # Gets "11.28.23_01-12-36"
+                            date_components = date_part.split('_')
+                            if len(date_components) == 2:
+                                date_str = date_components[0].replace('.', '/') + ' ' + date_components[1].replace('-', ':')
+                        except:
+                            date_str = backup_name
+                    
+                    backup_list.append({
+                        'id': backup.id,
+                        'name': backup_name,
+                        'date': date_str,
+                        'type': config.get('Backuptype', 'Full Backup'),
+                        'size': config.get('size', '0')
+                    })
+                except Exception as e:
+                    logging.CyberCPLogFileWriter.writeToFile(f"Error parsing backup config: {str(e)}")
+                    continue
+            
+            data_ret = {'status': 1, 'backups': backup_list}
+            json_data = json.dumps(data_ret)
+            return HttpResponse(json_data)
+            
+        except BaseException as msg:
+            data_ret = {'status': 0, 'error_message': str(msg)}
+            json_data = json.dumps(data_ret)
+            return HttpResponse(json_data)
+

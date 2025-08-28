@@ -17,8 +17,8 @@ from CyberCP import settings
 import random
 import string
 
-VERSION = '2.3'
-BUILD = 5
+VERSION = '2.4'
+BUILD = 3
 
 CENTOS7 = 0
 CENTOS8 = 1
@@ -39,7 +39,7 @@ class Upgrade:
     UbuntuPath = '/etc/lsb-release'
     openEulerPath = '/etc/openEuler-release'
     FromCloud = 0
-    SnappyVersion = '2.33.0'
+    SnappyVersion = '2.38.2'
     LogPathNew = '/home/cyberpanel/upgrade_logs'
     SoftUpgrade = 0
 
@@ -69,6 +69,31 @@ class Upgrade:
               '"dkimManager": 1, "createFTPAccount": 1, "deleteFTPAccount": 1, "listFTPAccounts": 1, "createBackup": 1,' \
               ' "restoreBackup": 0, "addDeleteDestinations": 0, "scheduleBackups": 0, "remoteBackups": 0, "googleDriveBackups": 1, "manageSSL": 1, ' \
               '"hostnameSSL": 0, "mailServerSSL": 0 }'
+
+    @staticmethod
+    def FetchCloudLinuxAlmaVersionVersion():
+        if os.path.exists('/etc/os-release'):
+            data = open('/etc/os-release', 'r').read()
+            if (data.find('CloudLinux') > -1 or data.find('cloudlinux') > -1) and (
+                    data.find('8.9') > -1 or data.find('Anatoly Levchenko') > -1 or data.find('VERSION="8.') > -1):
+                return 'cl-89'
+            elif (data.find('CloudLinux') > -1 or data.find('cloudlinux') > -1) and (
+                    data.find('8.8') > -1 or data.find('Anatoly Filipchenko') > -1):
+                return 'cl-88'
+            elif (data.find('CloudLinux') > -1 or data.find('cloudlinux') > -1) and (
+                    data.find('9.4') > -1 or data.find('VERSION="9.') > -1):
+                return 'cl-88'
+            elif (data.find('AlmaLinux') > -1 or data.find('almalinux') > -1) and (
+                    data.find('8.9') > -1 or data.find('Midnight Oncilla') > -1 or data.find('VERSION="8.') > -1):
+                return 'al-88'
+            elif (data.find('AlmaLinux') > -1 or data.find('almalinux') > -1) and (
+                    data.find('8.7') > -1 or data.find('Stone Smilodon') > -1):
+                return 'al-87'
+            elif (data.find('AlmaLinux') > -1 or data.find('almalinux') > -1) and (
+                    data.find('9.4') > -1 or data.find('9.3') > -1 or data.find('Shamrock Pampas') > -1 or data.find(
+                    'Seafoam Ocelot') > -1 or data.find('VERSION="9.') > -1):
+                return 'al-93'
+        return None
 
     @staticmethod
     def decideCentosVersion():
@@ -156,6 +181,28 @@ class Upgrade:
                     Upgrade.stdOut(component + ' successful.', 0)
                     break
             return True
+        except:
+            return False
+    
+    @staticmethod
+    def executioner_silent(command, component, do_exit=0, shell=False):
+        """Silent version of executioner that suppresses all output"""
+        try:
+            FNULL = open(os.devnull, 'w')
+            count = 0
+            while True:
+                if shell == False:
+                    res = subprocess.call(shlex.split(command), stdout=FNULL, stderr=FNULL)
+                else:
+                    res = subprocess.call(command, stdout=FNULL, stderr=FNULL, shell=True)
+                if res != 0:
+                    count = count + 1
+                    if count == 3:
+                        FNULL.close()
+                        return False
+                else:
+                    FNULL.close()
+                    return True
         except:
             return False
 
@@ -309,17 +356,21 @@ class Upgrade:
             except:
                 pass
 
-            command = 'wget -O /usr/local/CyberCP/public/phpmyadmin.zip https://github.com/usmannasir/cyberpanel/raw/stable/phpmyadmin.zip'
-            Upgrade.executioner(command, 0)
+            Upgrade.stdOut("Installing phpMyAdmin...", 0)
+            
+            command = 'wget -q -O /usr/local/CyberCP/public/phpmyadmin.zip https://github.com/usmannasir/cyberpanel/raw/stable/phpmyadmin.zip'
+            Upgrade.executioner_silent(command, 'Download phpMyAdmin')
 
-            command = 'unzip /usr/local/CyberCP/public/phpmyadmin.zip -d /usr/local/CyberCP/public/'
-            Upgrade.executioner(command, 0)
+            command = 'unzip -q /usr/local/CyberCP/public/phpmyadmin.zip -d /usr/local/CyberCP/public/'
+            Upgrade.executioner_silent(command, 'Extract phpMyAdmin')
 
             command = 'mv /usr/local/CyberCP/public/phpMyAdmin-*-all-languages /usr/local/CyberCP/public/phpmyadmin'
-            subprocess.call(command, shell=True)
+            subprocess.call(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             command = 'rm -f /usr/local/CyberCP/public/phpmyadmin.zip'
-            Upgrade.executioner(command, 0)
+            Upgrade.executioner_silent(command, 'Cleanup phpMyAdmin zip')
+            
+            Upgrade.stdOut("phpMyAdmin installation completed.", 0)
 
             ## Write secret phrase
 
@@ -442,11 +493,13 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
 
             count = 1
 
+            Upgrade.stdOut("Installing SnappyMail...", 0)
+            
             while (1):
-                command = 'wget https://github.com/the-djmaze/snappymail/releases/download/v%s/snappymail-%s.zip' % (
+                command = 'wget -q https://github.com/the-djmaze/snappymail/releases/download/v%s/snappymail-%s.zip' % (
                     Upgrade.SnappyVersion, Upgrade.SnappyVersion)
                 cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+                res = subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if res != 0:
                     count = count + 1
                     if count == 3:
@@ -462,10 +515,10 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
                 shutil.rmtree('/usr/local/CyberCP/public/snappymail')
 
             while (1):
-                command = 'unzip snappymail-%s.zip -d /usr/local/CyberCP/public/snappymail' % (Upgrade.SnappyVersion)
+                command = 'unzip -q snappymail-%s.zip -d /usr/local/CyberCP/public/snappymail' % (Upgrade.SnappyVersion)
 
                 cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+                res = subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if res != 0:
                     count = count + 1
                     if count == 3:
@@ -486,7 +539,7 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
             while (1):
                 command = 'find . -type d -exec chmod 755 {} \;'
                 cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+                res = subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if res != 0:
                     count = count + 1
                     if count == 3:
@@ -501,7 +554,7 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
             while (1):
                 command = 'find . -type f -exec chmod 644 {} \;'
                 cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+                res = subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if res != 0:
                     count = count + 1
                     if count == 3:
@@ -527,13 +580,13 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
             writeToFile.close()
 
             command = "mkdir -p /usr/local/lscp/cyberpanel/rainloop/data/_data_/_default_/configs/"
-            Upgrade.executioner(command, 'mkdir snappymail configs', 0)
+            Upgrade.executioner_silent(command, 'mkdir snappymail configs', 0)
 
-            command = f'wget -O /usr/local/CyberCP/snappymail_cyberpanel.php  https://raw.githubusercontent.com/the-djmaze/snappymail/master/integrations/cyberpanel/install.php'
-            Upgrade.executioner(command, 'verify certificate', 0)
+            command = f'wget -q -O /usr/local/CyberCP/snappymail_cyberpanel.php  https://raw.githubusercontent.com/the-djmaze/snappymail/master/integrations/cyberpanel/install.php'
+            Upgrade.executioner_silent(command, 'verify certificate', 0)
 
             command = f'/usr/local/lsws/lsphp80/bin/php /usr/local/CyberCP/snappymail_cyberpanel.php'
-            Upgrade.executioner(command, 'verify certificate', 0)
+            Upgrade.executioner_silent(command, 'verify certificate', 0)
 
             # labsPath = '/usr/local/lscp/cyberpanel/rainloop/data/_data_/_default_/configs/application.ini'
 
@@ -655,6 +708,8 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
             #             Upgrade.executioner(command, 'verify certificate', 0)
 
             os.chdir(cwd)
+            
+            Upgrade.stdOut("SnappyMail installation completed.", 0)
 
         except BaseException as msg:
             Upgrade.stdOut(str(msg) + " [downoad_and_install_raindloop]", 0)
@@ -780,6 +835,151 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
             except:
                 pass
 
+            # AI Scanner Tables
+            try:
+                cursor.execute('''
+                    CREATE TABLE `ai_scanner_settings` (
+                        `id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY,
+                        `admin_id` integer NOT NULL UNIQUE,
+                        `api_key` varchar(255) DEFAULT NULL,
+                        `balance` decimal(10,4) NOT NULL DEFAULT 0.0000,
+                        `is_payment_configured` bool NOT NULL DEFAULT 0,
+                        `created_at` datetime(6) NOT NULL,
+                        `updated_at` datetime(6) NOT NULL,
+                        KEY `ai_scanner_settings_admin_id_idx` (`admin_id`),
+                        CONSTRAINT `ai_scanner_settings_admin_id_fk` FOREIGN KEY (`admin_id`) 
+                        REFERENCES `loginSystem_administrator` (`id`) ON DELETE CASCADE
+                    )
+                ''')
+            except:
+                pass
+
+            try:
+                cursor.execute('''
+                    CREATE TABLE `ai_scanner_history` (
+                        `id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY,
+                        `admin_id` integer NOT NULL,
+                        `scan_id` varchar(100) NOT NULL UNIQUE,
+                        `domain` varchar(255) NOT NULL,
+                        `scan_type` varchar(20) NOT NULL DEFAULT 'full',
+                        `status` varchar(20) NOT NULL DEFAULT 'pending',
+                        `cost_usd` decimal(10,6) DEFAULT NULL,
+                        `files_scanned` integer NOT NULL DEFAULT 0,
+                        `issues_found` integer NOT NULL DEFAULT 0,
+                        `findings_json` longtext DEFAULT NULL,
+                        `summary_json` longtext DEFAULT NULL,
+                        `error_message` longtext DEFAULT NULL,
+                        `started_at` datetime(6) NOT NULL,
+                        `completed_at` datetime(6) DEFAULT NULL,
+                        KEY `ai_scanner_history_admin_id_idx` (`admin_id`),
+                        KEY `ai_scanner_history_scan_id_idx` (`scan_id`),
+                        KEY `ai_scanner_history_started_at_idx` (`started_at`),
+                        CONSTRAINT `ai_scanner_history_admin_id_fk` FOREIGN KEY (`admin_id`) 
+                        REFERENCES `loginSystem_administrator` (`id`) ON DELETE CASCADE
+                    )
+                ''')
+            except:
+                pass
+
+            try:
+                cursor.execute('''
+                    CREATE TABLE `ai_scanner_file_tokens` (
+                        `id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY,
+                        `token` varchar(100) NOT NULL UNIQUE,
+                        `scan_history_id` integer NOT NULL,
+                        `domain` varchar(255) NOT NULL,
+                        `wp_path` varchar(500) NOT NULL,
+                        `expires_at` datetime(6) NOT NULL,
+                        `created_at` datetime(6) NOT NULL,
+                        `is_active` bool NOT NULL DEFAULT 1,
+                        KEY `ai_scanner_file_tokens_scan_history_id_idx` (`scan_history_id`),
+                        KEY `ai_scanner_file_tokens_token_idx` (`token`),
+                        CONSTRAINT `ai_scanner_file_tokens_scan_history_id_fk` FOREIGN KEY (`scan_history_id`) 
+                        REFERENCES `ai_scanner_history` (`id`) ON DELETE CASCADE
+                    )
+                ''')
+            except:
+                pass
+
+            try:
+                cursor.execute('''
+                    CREATE TABLE `ai_scanner_status_updates` (
+                        `scan_id` varchar(100) NOT NULL PRIMARY KEY,
+                        `phase` varchar(50) NOT NULL,
+                        `progress` integer NOT NULL DEFAULT 0,
+                        `current_file` longtext DEFAULT NULL,
+                        `files_discovered` integer NOT NULL DEFAULT 0,
+                        `files_scanned` integer NOT NULL DEFAULT 0,
+                        `files_remaining` integer NOT NULL DEFAULT 0,
+                        `threats_found` integer NOT NULL DEFAULT 0,
+                        `critical_threats` integer NOT NULL DEFAULT 0,
+                        `high_threats` integer NOT NULL DEFAULT 0,
+                        `activity_description` longtext DEFAULT NULL,
+                        `last_updated` datetime(6) NOT NULL,
+                        `created_at` datetime(6) NOT NULL,
+                        KEY `ai_scanner_status_updates_scan_id_last_updated_idx` (`scan_id`, `last_updated` DESC)
+                    )
+                ''')
+            except:
+                pass
+
+            # AI Scanner Scheduled Scans Tables
+            try:
+                cursor.execute('''
+                    CREATE TABLE `ai_scanner_scheduled_scans` (
+                        `id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY,
+                        `admin_id` integer NOT NULL,
+                        `name` varchar(200) NOT NULL,
+                        `domains` longtext NOT NULL,
+                        `frequency` varchar(20) NOT NULL DEFAULT 'weekly',
+                        `scan_type` varchar(20) NOT NULL DEFAULT 'full',
+                        `time_of_day` time NOT NULL,
+                        `day_of_week` integer DEFAULT NULL,
+                        `day_of_month` integer DEFAULT NULL,
+                        `status` varchar(20) NOT NULL DEFAULT 'active',
+                        `last_run` datetime(6) DEFAULT NULL,
+                        `next_run` datetime(6) DEFAULT NULL,
+                        `created_at` datetime(6) NOT NULL,
+                        `updated_at` datetime(6) NOT NULL,
+                        `email_notifications` bool NOT NULL DEFAULT 1,
+                        `notification_emails` longtext NOT NULL DEFAULT '',
+                        `notify_on_threats` bool NOT NULL DEFAULT 1,
+                        `notify_on_completion` bool NOT NULL DEFAULT 0,
+                        `notify_on_failure` bool NOT NULL DEFAULT 1,
+                        KEY `ai_scanner_scheduled_scans_admin_id_idx` (`admin_id`),
+                        KEY `ai_scanner_scheduled_scans_status_next_run_idx` (`status`, `next_run`),
+                        CONSTRAINT `ai_scanner_scheduled_scans_admin_id_fk` FOREIGN KEY (`admin_id`) 
+                        REFERENCES `loginSystem_administrator` (`id`) ON DELETE CASCADE
+                    )
+                ''')
+            except:
+                pass
+
+            try:
+                cursor.execute('''
+                    CREATE TABLE `ai_scanner_scheduled_executions` (
+                        `id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY,
+                        `scheduled_scan_id` integer NOT NULL,
+                        `execution_time` datetime(6) NOT NULL,
+                        `status` varchar(20) NOT NULL DEFAULT 'pending',
+                        `domains_scanned` longtext NOT NULL DEFAULT '',
+                        `total_scans` integer NOT NULL DEFAULT 0,
+                        `successful_scans` integer NOT NULL DEFAULT 0,
+                        `failed_scans` integer NOT NULL DEFAULT 0,
+                        `total_cost` decimal(10,6) NOT NULL DEFAULT 0.000000,
+                        `scan_ids` longtext NOT NULL DEFAULT '',
+                        `error_message` longtext DEFAULT NULL,
+                        `started_at` datetime(6) DEFAULT NULL,
+                        `completed_at` datetime(6) DEFAULT NULL,
+                        KEY `ai_scanner_scheduled_executions_scheduled_scan_id_idx` (`scheduled_scan_id`),
+                        KEY `ai_scanner_scheduled_executions_execution_time_idx` (`execution_time` DESC),
+                        CONSTRAINT `ai_scanner_scheduled_executions_scheduled_scan_id_fk` FOREIGN KEY (`scheduled_scan_id`) 
+                        REFERENCES `ai_scanner_scheduled_scans` (`id`) ON DELETE CASCADE
+                    )
+                ''')
+            except:
+                pass
+
             try:
                 cursor.execute(
                     'CREATE TABLE `loginSystem_acl` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `name` varchar(50) NOT NULL UNIQUE, `adminStatus` integer NOT NULL DEFAULT 0, `versionManagement` integer NOT NULL DEFAULT 0, `createNewUser` integer NOT NULL DEFAULT 0, `deleteUser` integer NOT NULL DEFAULT 0, `resellerCenter` integer NOT NULL DEFAULT 0, `changeUserACL` integer NOT NULL DEFAULT 0, `createWebsite` integer NOT NULL DEFAULT 0, `modifyWebsite` integer NOT NULL DEFAULT 0, `suspendWebsite` integer NOT NULL DEFAULT 0, `deleteWebsite` integer NOT NULL DEFAULT 0, `createPackage` integer NOT NULL DEFAULT 0, `deletePackage` integer NOT NULL DEFAULT 0, `modifyPackage` integer NOT NULL DEFAULT 0, `createDatabase` integer NOT NULL DEFAULT 0, `deleteDatabase` integer NOT NULL DEFAULT 0, `listDatabases` integer NOT NULL DEFAULT 0, `createNameServer` integer NOT NULL DEFAULT 0, `createDNSZone` integer NOT NULL DEFAULT 0, `deleteZone` integer NOT NULL DEFAULT 0, `addDeleteRecords` integer NOT NULL DEFAULT 0, `createEmail` integer NOT NULL DEFAULT 0, `deleteEmail` integer NOT NULL DEFAULT 0, `emailForwarding` integer NOT NULL DEFAULT 0, `changeEmailPassword` integer NOT NULL DEFAULT 0, `dkimManager` integer NOT NULL DEFAULT 0, `createFTPAccount` integer NOT NULL DEFAULT 0, `deleteFTPAccount` integer NOT NULL DEFAULT 0, `listFTPAccounts` integer NOT NULL DEFAULT 0, `createBackup` integer NOT NULL DEFAULT 0, `restoreBackup` integer NOT NULL DEFAULT 0, `addDeleteDestinations` integer NOT NULL DEFAULT 0, `scheduleBackups` integer NOT NULL DEFAULT 0, `remoteBackups` integer NOT NULL DEFAULT 0, `manageSSL` integer NOT NULL DEFAULT 0, `hostnameSSL` integer NOT NULL DEFAULT 0, `mailServerSSL` integer NOT NULL DEFAULT 0)')
@@ -866,7 +1066,11 @@ $cfg['Servers'][$i]['LogoutURL'] = 'phpmyadminsignin.php?logout';
                 cursor.execute("UPDATE loginSystem_acl SET config = '%s' where name = 'admin'" % (Upgrade.AdminACL))
             except BaseException as msg:
                 print(str(msg))
-                import sleep
+                try:
+                    import sleep
+                except:
+                    from time import sleep
+                from time import sleep
                 sleep(10)
 
             try:
@@ -1162,6 +1366,18 @@ CREATE TABLE `websiteFunctions_backupsv2` (`id` integer AUTO_INCREMENT NOT NULL 
             except:
                 pass
 
+            query = "CREATE TABLE `IncBackups_oneclickbackups` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `planName` varchar(100) NOT NULL, `months` varchar(100) NOT NULL, `price` varchar(100) NOT NULL, `customer` varchar(255) NOT NULL, `subscription` varchar(255) NOT NULL UNIQUE, `sftpUser` varchar(100) NOT NULL, `config` longtext NOT NULL, `date` datetime(6) NOT NULL, `state` integer NOT NULL, `owner_id` integer NOT NULL);"
+            try:
+                cursor.execute(query)
+            except:
+                pass
+
+            query = 'ALTER TABLE `IncBackups_oneclickbackups` ADD CONSTRAINT `IncBackups_oneclickb_owner_id_7b4250a4_fk_loginSyst` FOREIGN KEY (`owner_id`) REFERENCES `loginSystem_administrator` (`id`);'
+            try:
+                cursor.execute(query)
+            except:
+                pass
+
             if Upgrade.FindOperatingSytem() == Ubuntu22:
                 ### If ftp not installed then upgrade will fail so this command should not do exit
 
@@ -1170,6 +1386,18 @@ CREATE TABLE `websiteFunctions_backupsv2` (`id` integer AUTO_INCREMENT NOT NULL 
 
                 command = "systemctl restart pure-ftpd-mysql.service"
                 Upgrade.executioner(command, command, 0)
+
+            try:
+                clAPVersion = Upgrade.FetchCloudLinuxAlmaVersionVersion()
+                if isinstance(clAPVersion, str) and '-' in clAPVersion:
+                    type = clAPVersion.split('-')[0]
+                    version = int(clAPVersion.split('-')[1])
+
+                    if type == 'al' and version >= 90:
+                        command = "sed -i 's/MYSQLCrypt md5/MYSQLCrypt crypt/g' /etc/pure-ftpd/pureftpd-mysql.conf"
+                        Upgrade.executioner(command, command, 0)
+            except:
+                pass
 
             try:
                 connection.close()
@@ -1644,6 +1872,11 @@ CREATE TABLE `websiteFunctions_backupsv2` (`id` integer AUTO_INCREMENT NOT NULL 
 
             try:
                 cursor.execute('ALTER TABLE dockerManager_containers ADD volumes longtext')
+            except:
+                pass
+
+            try:
+                cursor.execute('ALTER TABLE dockerManager_containers MODIFY COLUMN name VARCHAR(150);')
             except:
                 pass
 
@@ -2140,12 +2373,20 @@ CREATE TABLE `websiteFunctions_backupsv2` (`id` integer AUTO_INCREMENT NOT NULL 
                 return 0, 'Failed to execute %s' % (command)
 
             command = 'git status'
-            currentBranch = subprocess.check_output(shlex.split(command)).decode()
+            try:
+                currentBranch = subprocess.check_output(shlex.split(command)).decode()
+            except Exception as e:
+                Upgrade.stdOut(f"Error checking git status: {str(e)}")
+                currentBranch = ""
 
             if currentBranch.find('On branch %s' % (branch)) > -1 and currentBranch.find(
                     'On branch %s-dev' % (branch)) == -1:
 
                 command = 'git stash'
+                if not Upgrade.executioner(command, command, 1):
+                    return 0, 'Failed to execute %s' % (command)
+
+                command = 'git clean -f'
                 if not Upgrade.executioner(command, command, 1):
                     return 0, 'Failed to execute %s' % (command)
 
@@ -2237,7 +2478,10 @@ CREATE TABLE `websiteFunctions_backupsv2` (`id` integer AUTO_INCREMENT NOT NULL 
                     os.remove(lscpdPath)
 
                 try:
-                    result = subprocess.run('uname -a', capture_output=True, text=True, shell=True)
+                    try:
+                        result = subprocess.run('uname -a', capture_output=True, universal_newlines=True, shell=True)
+                    except:
+                        result = subprocess.run('uname -a', stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, shell=True)
 
                     if result.stdout.find('aarch64') == -1:
                         lscpdSelection = 'lscpd-0.3.1'
@@ -2538,10 +2782,10 @@ echo $oConfig->Save() ? 'Done' : 'Error';
             Upgrade.executioner(command, 0)
 
             command = '/usr/local/lsws/lsphp72/bin/php /usr/local/CyberCP/public/snappymail.php'
-            Upgrade.executioner(command, 0)
+            Upgrade.executioner_silent(command, 'Configure SnappyMail')
 
             command = 'chmod 600 /usr/local/CyberCP/public/snappymail.php'
-            Upgrade.executioner(command, 0)
+            Upgrade.executioner_silent(command, 'Secure SnappyMail config')
 
             ###
 
@@ -2628,6 +2872,9 @@ echo $oConfig->Save() ? 'Done' : 'Error';
                 command = 'yum install lsphp82* -y'
                 subprocess.call(command, shell=True)
 
+            command = 'yum install lsphp83* -y'
+            subprocess.call(command, shell=True)
+
         except:
             command = 'DEBIAN_FRONTEND=noninteractive apt-get -y install ' \
                       'lsphp7? lsphp7?-common lsphp7?-curl lsphp7?-dev lsphp7?-imap lsphp7?-intl lsphp7?-json ' \
@@ -2642,6 +2889,9 @@ echo $oConfig->Save() ? 'Done' : 'Error';
             os.system(command)
 
             command = 'DEBIAN_FRONTEND=noninteractive apt-get -y install lsphp82*'
+            os.system(command)
+
+            command = 'DEBIAN_FRONTEND=noninteractive apt-get -y install lsphp83*'
             os.system(command)
 
         CentOSPath = '/etc/redhat-release'
@@ -2707,7 +2957,11 @@ echo $oConfig->Save() ? 'Done' : 'Error';
                     if items.password.find('CRYPT') > -1:
                         continue
                     command = 'doveadm pw -p %s' % (items.password)
-                    items.password = subprocess.check_output(shlex.split(command)).decode("utf-8").strip('\n')
+                    try:
+                        items.password = subprocess.check_output(shlex.split(command)).decode("utf-8").strip('\n')
+                    except Exception as e:
+                        Upgrade.stdOut(f"Error hashing password for {items.email}: {str(e)}")
+                        continue
                     items.save()
 
                 command = "systemctl restart dovecot"
@@ -2768,9 +3022,13 @@ echo $oConfig->Save() ? 'Done' : 'Error';
 
             dovecotConf = '/etc/dovecot/dovecot.conf'
 
-            dovecotContent = open(dovecotConf, 'r').read()
+            try:
+                dovecotContent = open(dovecotConf, 'r').read()
+            except Exception as e:
+                Upgrade.stdOut(f"Error reading dovecot config: {str(e)}")
+                dovecotContent = ""
 
-            if dovecotContent.find('service stats') == -1:
+            if dovecotContent and dovecotContent.find('service stats') == -1:
                 writeToFile = open(dovecotConf, 'a')
 
                 content = """\nservice stats {
@@ -2788,6 +3046,38 @@ echo $oConfig->Save() ? 'Done' : 'Error';
 
                 writeToFile.write(content)
                 writeToFile.close()
+
+            # Fix mailbox auto-creation issue
+            if dovecotContent and dovecotContent.find('lda_mailbox_autocreate') == -1:
+                Upgrade.stdOut("Enabling mailbox auto-creation in dovecot...")
+                
+                # Add mailbox auto-creation settings to protocol lda section
+                try:
+                    dovecotContent = open(dovecotConf, 'r').read()
+                except Exception as e:
+                    Upgrade.stdOut(f"Error reading dovecot config: {str(e)}")
+                    dovecotContent = ""
+                
+                if dovecotContent and dovecotContent.find('protocol lda') > -1:
+                    # Update existing protocol lda section
+                    import re
+                    pattern = r'(protocol lda\s*{[^}]*)'
+                    replacement = r'\1\n    lda_mailbox_autocreate = yes\n    lda_mailbox_autosubscribe = yes'
+                    if isinstance(dovecotContent, str):
+                        dovecotContent = re.sub(pattern, replacement, dovecotContent)
+                    
+                    writeToFile = open(dovecotConf, 'w')
+                    writeToFile.write(dovecotContent)
+                    writeToFile.close()
+                else:
+                    # Add new protocol lda section
+                    writeToFile = open(dovecotConf, 'a')
+                    content = """\nprotocol lda {
+    lda_mailbox_autocreate = yes
+    lda_mailbox_autosubscribe = yes
+}\n"""
+                    writeToFile.write(content)
+                    writeToFile.close()
 
                 command = 'systemctl restart dovecot'
                 Upgrade.executioner(command, command, 0)
@@ -2890,6 +3180,13 @@ vmail
         command = """sed -i '/CyberCP/d' /etc/crontab"""
         Upgrade.executioner(command, command, 0, True)
 
+        # Ensure log directory exists for scheduled scans
+        if not os.path.exists('/usr/local/lscp/logs'):
+            try:
+                os.makedirs('/usr/local/lscp/logs', mode=0o755)
+            except:
+                pass
+
         if os.path.exists('/usr/local/lsws/conf/httpd.conf'):
             # Setup /usr/local/lsws/conf/httpd.conf to use new Logformat standard for better stats and accesslogs
             command = """sed -i "s|^LogFormat.*|LogFormat '%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"' combined|g" /usr/local/lsws/conf/httpd.conf"""
@@ -2923,6 +3220,7 @@ vmail
 0 0 * * 4 /usr/local/CyberCP/bin/python /usr/local/CyberCP/plogical/renew.py >/dev/null 2>&1
 7 0 * * * "/root/.acme.sh"/acme.sh --cron --home "/root/.acme.sh" > /dev/null
 */3 * * * * if ! find /home/*/public_html/ -maxdepth 2 -type f -newer /usr/local/lsws/cgid -name '.htaccess' -exec false {} +; then /usr/local/lsws/bin/lswsctrl restart; fi
+* * * * * /usr/local/CyberCP/bin/python /usr/local/CyberCP/manage.py run_scheduled_scans >/usr/local/lscp/logs/scheduled_scans.log 2>&1
 """
 
                 writeToFile = open(cronPath, 'w')
@@ -2952,6 +3250,15 @@ vmail
                 writeToFile.write(content)
                 writeToFile.close()
 
+            # Add AI Scanner scheduled scans cron job if missing
+            if data.find('run_scheduled_scans') == -1:
+                content = """
+* * * * * /usr/local/CyberCP/bin/python /usr/local/CyberCP/manage.py run_scheduled_scans >/usr/local/lscp/logs/scheduled_scans.log 2>&1
+"""
+                writeToFile = open(cronPath, 'a')
+                writeToFile.write(content)
+                writeToFile.close()
+
 
         else:
             content = """
@@ -2963,6 +3270,7 @@ vmail
 7 0 * * * "/root/.acme.sh"/acme.sh --cron --home "/root/.acme.sh" > /dev/null
 0 0 * * * /usr/local/CyberCP/bin/python /usr/local/CyberCP/IncBackups/IncScheduler.py Daily
 0 0 * * 0 /usr/local/CyberCP/bin/python /usr/local/CyberCP/IncBackups/IncScheduler.py Weekly
+* * * * * /usr/local/CyberCP/bin/python /usr/local/CyberCP/manage.py run_scheduled_scans >/usr/local/lscp/logs/scheduled_scans.log 2>&1
 """
             writeToFile = open(cronPath, 'w')
             writeToFile.write(content)
@@ -3044,8 +3352,13 @@ vmail
             php81Path = '/etc/opt/remi/php81/php-fpm.d/'
             php82Path = '/etc/opt/remi/php82/php-fpm.d/'
 
+            php83Path = '/etc/opt/remi/php83/php-fpm.d/'
+            php84Path = '/etc/opt/remi/php84/php-fpm.d/'
+            php85Path = '/etc/opt/remi/php85/php-fpm.d/'
+
             serviceName = 'httpd'
             sockPath = '/var/run/php-fpm/'
+            runAsUser = 'apache'
         else:
             serverRootPath = '/etc/apache2'
             configBasePath = '/etc/apache2/sites-enabled/'
@@ -3062,9 +3375,13 @@ vmail
             php80Path = '/etc/php/8.0/fpm/pool.d/'
             php81Path = '/etc/php/8.1/fpm/pool.d/'
             php82Path = '/etc/php/8.2/fpm/pool.d/'
+            php83Path = '/etc/php/8.3/fpm/pool.d/'
+            php84Path = '/etc/php/8.4/fpm/pool.d/'
+            php85Path = '/etc/php/8.5/fpm/pool.d/'
 
             serviceName = 'apache2'
             sockPath = '/var/run/php/'
+            runAsUser = 'www-data'
 
         #####
 
@@ -3074,11 +3391,11 @@ vmail
         if os.path.exists(php54Path):
             content = f"""
 [php54default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php5.4-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3092,11 +3409,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php55Path):
             content = f'''
 [php55default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php5.5-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3110,11 +3427,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php56Path):
             content = f'''
 [php56default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php5.6-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3128,11 +3445,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php70Path):
             content = f'''
 [php70default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php7.0-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3146,11 +3463,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php71Path):
             content = f'''
 [php71default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php7.1-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3164,11 +3481,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php72Path):
             content = f'''
 [php72default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php7.2-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3182,11 +3499,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php73Path):
             content = f'''
 [php73default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php7.3-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3200,11 +3517,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php74Path):
             content = f'''
 [php74default]
-user = www-data
-group = www-data
-listen ={sockPath}php7.3-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+user = {runAsUser}
+group = {runAsUser}
+listen ={sockPath}php7.4-fpm.sock
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3218,11 +3535,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php80Path):
             content = f'''
 [php80default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php8.0-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3237,11 +3554,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php81Path):
             content = f'''
 [php81default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php8.1-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3255,11 +3572,11 @@ pm.max_spare_servers = 3
         if os.path.exists(php82Path):
             content = f'''
 [php82default]
-user = www-data
-group = www-data
+user = {runAsUser}
+group = {runAsUser}
 listen ={sockPath}php8.2-fpm.sock
-listen.owner = www-data
-listen.group = www-data
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -3270,6 +3587,96 @@ pm.max_spare_servers = 3
             WriteToFile = open(f'{php82Path}www.conf', 'w')
             WriteToFile.write(content)
             WriteToFile.close()
+
+        if os.path.exists(php83Path):
+            content = f'''
+[php83default]
+user = {runAsUser}
+group = {runAsUser}
+listen ={sockPath}php8.3-fpm.sock
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+'''
+            WriteToFile = open(f'{php83Path}www.conf', 'w')
+            WriteToFile.write(content)
+            WriteToFile.close()
+
+        if os.path.exists(php84Path):
+            content = f'''
+[php84default]
+user = {runAsUser}
+group = {runAsUser}
+listen ={sockPath}php8.4-fpm.sock
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+'''
+            WriteToFile = open(f'{php84Path}www.conf', 'w')
+            WriteToFile.write(content)
+            WriteToFile.close()
+
+        if os.path.exists(php85Path):
+            content = f'''
+[php85default]
+user = {runAsUser}
+group = {runAsUser}
+listen ={sockPath}php8.5-fpm.sock
+listen.owner = {runAsUser}
+listen.group = {runAsUser}
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+'''
+            WriteToFile = open(f'{php85Path}www.conf', 'w')
+            WriteToFile.write(content)
+            WriteToFile.close()
+
+    @staticmethod
+    def setupPHPSymlink():
+        try:
+            # Check if PHP 8.3 exists
+            if not os.path.exists('/usr/local/lsws/lsphp83/bin/php'):
+                Upgrade.stdOut("PHP 8.3 not found, installing it first...")
+                
+                # Install PHP 8.3 based on OS
+                if os.path.exists(Upgrade.CentOSPath) or os.path.exists(Upgrade.openEulerPath):
+                    command = 'yum install lsphp83 lsphp83-* -y'
+                    Upgrade.executioner(command, 'Install PHP 8.3', 0)
+                else:
+                    command = 'DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y install lsphp83 lsphp83-*'
+                    Upgrade.executioner(command, 'Install PHP 8.3', 0)
+                
+                # Verify installation
+                if not os.path.exists('/usr/local/lsws/lsphp83/bin/php'):
+                    Upgrade.stdOut('[ERROR] Failed to install PHP 8.3')
+                    return 0
+            
+            # Remove existing PHP symlink if it exists
+            if os.path.exists('/usr/bin/php'):
+                os.remove('/usr/bin/php')
+
+            # Create symlink to PHP 8.3
+            command = 'ln -s /usr/local/lsws/lsphp83/bin/php /usr/bin/php'
+            Upgrade.executioner(command, 'Setup PHP Symlink to 8.3', 0)
+
+            Upgrade.stdOut("PHP symlink updated to PHP 8.3 successfully.")
+
+        except BaseException as msg:
+            Upgrade.stdOut('[ERROR] ' + str(msg) + " [setupPHPSymlink]")
+            return 0
+
+        return 1
 
     @staticmethod
     def upgrade(branch):
@@ -3283,10 +3690,18 @@ pm.max_spare_servers = 3
 
         if os.path.exists(Upgrade.CentOSPath) or os.path.exists(Upgrade.openEulerPath):
             command = 'yum list installed'
-            Upgrade.installedOutput = subprocess.check_output(shlex.split(command)).decode()
+            try:
+                Upgrade.installedOutput = subprocess.check_output(shlex.split(command)).decode()
+            except Exception as e:
+                Upgrade.stdOut(f"Error getting installed packages: {str(e)}")
+                Upgrade.installedOutput = ""
         else:
             command = 'apt list'
-            Upgrade.installedOutput = subprocess.check_output(shlex.split(command)).decode()
+            try:
+                Upgrade.installedOutput = subprocess.check_output(shlex.split(command)).decode()
+            except Exception as e:
+                Upgrade.stdOut(f"Error getting installed packages: {str(e)}")
+                Upgrade.installedOutput = ""
 
         # command = 'systemctl stop cpssh'
         # Upgrade.executioner(command, 'fix csf if there', 0)
@@ -3321,7 +3736,20 @@ pm.max_spare_servers = 3
 
         Upgrade.fixSudoers()
         # Upgrade.mountTemp()
+
+        ### fix a temp issue causing upgrade problem
+
+        fstab = "/etc/fstab"
+
+        if open(fstab, 'r').read().find('/usr/.tempdisk')>-1:
+            command = 'umount -l /tmp'
+            Upgrade.executioner(command, 'tmp adjustment', 0)
+
+            command = 'mount -t tmpfs -o size=2G tmpfs /tmp'
+            Upgrade.executioner(command, 'tmp adjustment', 0)
+
         Upgrade.dockerUsers()
+        Upgrade.setupPHPSymlink()
         Upgrade.setupComposer()
 
         ##
@@ -3332,6 +3760,10 @@ pm.max_spare_servers = 3
             os.remove('/usr/local/CyberPanel.' + versionNumbring)
 
         ##
+
+        # execPath = "sudo /usr/local/CyberCP/bin/python /usr/local/CyberCP/plogical/csf.py"
+        # execPath = execPath + " removeCSF"
+        # Upgrade.executioner(execPath, 'fix csf if there', 0)
 
         Upgrade.downloadAndUpgrade(versionNumbring, branch)
         versionNumbring = Upgrade.downloadLink()
@@ -3370,6 +3802,10 @@ pm.max_spare_servers = 3
         Upgrade.setupCLI()
         Upgrade.someDirectories()
         Upgrade.installLSCPD(branch)
+        Upgrade.FixCurrentQuoatasSystem()
+        
+        ## Fix Apache configuration issues after upgrade
+        Upgrade.fixApacheConfiguration()
 
         ### General migrations are not needed any more
 
@@ -3413,8 +3849,94 @@ pm.max_spare_servers = 3
             except:
                 pass
 
-        command = 'csf -uf'
-        Upgrade.executioner(command, 'fix csf if there', 0)
+        #command = 'csf -uf'
+        #Upgrade.executioner(command, 'fix csf if there', 0)
+
+        if os.path.exists('/etc/csf'):
+            ##### Function to backup custom csf files and restore
+
+            from datetime import datetime
+
+            # List of files to backup
+            FILES = [
+                "/etc/csf/csf.allow",
+                "/etc/csf/csf.deny",
+                "/etc/csf/csf.conf",
+                "/etc/csf/csf.ignore",
+                "/etc/csf/csf.rignore",
+                "/etc/csf/csf.blocklists",
+                "/etc/csf/csf.dyndns"
+            ]
+
+            # Directory for backups
+            BACKUP_DIR = f"/home/cyberpanel/csf_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+            # Backup function
+            def backup_files():
+                os.makedirs(BACKUP_DIR, exist_ok=True)
+                for file in FILES:
+                    if os.path.exists(file):
+                        shutil.copy(file, BACKUP_DIR)
+                        print(f"Backed up: {file}")
+                    else:
+                        print(f"File not found, skipping: {file}")
+
+            # Restore function
+            def restore_files():
+                for file in FILES:
+                    backup_file = os.path.join(BACKUP_DIR, os.path.basename(file))
+                    if os.path.exists(backup_file):
+                        try:
+                            shutil.copy(backup_file, file)
+                            print(f"Restored: {file}")
+                        except Exception as e:
+                            print(f"Failed to restore {file}: {str(e)}")
+                    else:
+                        print(f"Backup not found for: {file}")
+
+            # Backup the files
+            print("Backing up files...")
+            backup_files()
+
+            execPath = "sudo /usr/local/CyberCP/bin/python /usr/local/CyberCP/plogical/csf.py"
+            execPath = execPath + " removeCSF"
+            Upgrade.executioner(execPath, 'Remove CSF before reinstall', 0)
+
+            execPath = "sudo /usr/local/CyberCP/bin/python /usr/local/CyberCP/plogical/csf.py"
+            execPath = execPath + " installCSF"
+            Upgrade.executioner(execPath, 'Install CSF', 0)
+
+            # Restore the files AFTER installation
+            print("Restoring CSF configuration files...")
+            restore_files()
+            
+            # Restart CSF to apply restored configuration
+            command = 'csf -r'
+            Upgrade.executioner(command, 'Restart CSF with restored config', 0)
+
+
+
+        if os.path.exists('/usr/local/CyberCP/configservercsf'):
+            command = 'rm -f /usr/local/CyberCP/configservercsf/signals.py'
+            Upgrade.executioner(command, 'remove /usr/local/CyberCP/configservercsf/signals.py', 1)
+
+            sed_commands = [
+                'sed -i "s/url(r\'^configservercsf/path(\'configservercsf/g" /usr/local/CyberCP/CyberCP/urls.py',
+                'sed -i "s/from django.conf.urls import url/from django.urls import path/g" /usr/local/CyberCP/configservercsf/urls.py',
+                'sed -i "s/import signals/from . import signals/g" /usr/local/CyberCP/configservercsf/apps.py',
+                'sed -i "s/url(r\'^$\'/path(\'\'/g" /usr/local/CyberCP/configservercsf/urls.py',
+                'sed -i "s|url(r\'^iframe/$\'|path(\'iframe/\'|g" /usr/local/CyberCP/configservercsf/urls.py',
+                'sed -i -E "s/from.*, response/from plogical.httpProc import httpProc/g" /usr/local/CyberCP/configservercsf/views.py',
+                'find /usr/local/CyberCP -name "*.pyc" -delete',
+                'find /usr/local/CyberCP -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true',
+                'killall lswsgi'
+            ]
+
+            for cmd in sed_commands:
+                Upgrade.executioner(cmd, 'fix csf if there', 1)
+
+
+
         command = 'systemctl stop cpssh'
         Upgrade.executioner(command, 'fix csf if there', 0)
         Upgrade.AutoUpgradeAcme()
@@ -3441,6 +3963,17 @@ pm.max_spare_servers = 3
             command = 'chmod +x /usr/local/CyberCP/public/imunifyav/bin/execute.py'
             Upgrade.executioner(command, command, 1)
 
+        imfExecutePath = '/usr/local/CyberCP/public/imunify/bin/execute.py'
+        if os.path.exists(imfExecutePath):
+            command = f'chmod 755 {imfExecutePath}'
+            Upgrade.executioner(command, command, 0)
+
+
+        Upgrade.installDNS_CyberPanelACMEFile()
+
+        command = 'systemctl restart fastapi_ssh_server'
+        Upgrade.executioner(command, command, 0)
+
         Upgrade.stdOut("Upgrade Completed.")
 
         ### remove log file path incase its there
@@ -3449,6 +3982,765 @@ pm.max_spare_servers = 3
             time.sleep(30)
             if os.path.exists(Upgrade.LogPathNew):
                 os.remove(Upgrade.LogPathNew)
+
+    @staticmethod
+    def fixApacheConfigurationOld():
+        """OLD VERSION - DO NOT USE - Fix Apache configuration issues after upgrade"""
+        try:
+            # Check if Apache is installed
+            if Upgrade.FindOperatingSytem() == CENTOS7 or Upgrade.FindOperatingSytem() == CENTOS8 \
+                    or Upgrade.FindOperatingSytem() == openEuler20 or Upgrade.FindOperatingSytem() == openEuler22:
+                apache_service = 'httpd'
+                apache_config_dir = '/etc/httpd'
+            else:
+                apache_service = 'apache2'
+                apache_config_dir = '/etc/apache2'
+            
+            # Check if Apache is installed
+            check_apache = f'systemctl is-enabled {apache_service} 2>/dev/null'
+            result = subprocess.run(check_apache, shell=True, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                Upgrade.stdOut("Fixing Apache configuration...")
+                
+                # 1. Ensure Apache ports are correctly configured
+                command = 'grep -q "Listen 8083" /usr/local/lsws/conf/httpd_config.xml || echo "Apache port configuration might need manual check"'
+                Upgrade.executioner(command, 'Check Apache ports', 1)
+                
+                # 2. Fix proxy rewrite rules for all vhosts
+                # The issue: Both rewrite rules execute, causing incorrect proxying
+                # Fix: Add proper HTTPS condition for SSL proxy rule
+                command = '''find /usr/local/lsws/conf/vhosts/ -name "vhost.conf" -exec sed -i '
+                    /^REWRITERULE.*proxyApacheBackendSSL/i\\
+RewriteCond %{HTTPS}  =on
+                ' {} \;'''
+                Upgrade.executioner(command, 'Fix Apache SSL proxy condition', 1)
+                
+                # Also ensure the proxy backends are properly configured
+                command = '''grep -q "extprocessor apachebackend" /usr/local/lsws/conf/httpd_config.conf || echo "
+extprocessor apachebackend {
+  type                    proxy
+  address                 http://127.0.0.1:8083
+  maxConns                100
+  initTimeout             60
+  retryTimeout            30
+  respBuffer              0
+}
+
+extprocessor proxyApacheBackendSSL {
+  type                    proxy
+  address                 https://127.0.0.1:8082
+  maxConns                100
+  initTimeout             60
+  retryTimeout            30
+  respBuffer              0
+}" >> /usr/local/lsws/conf/httpd_config.conf'''
+                Upgrade.executioner(command, 'Ensure Apache proxy backends exist', 1)
+                
+                # 3. Ensure Apache is configured to listen on correct ports
+                if Upgrade.FindOperatingSytem() in [CENTOS7, CENTOS8, openEuler20, openEuler22]:
+                    apache_port_conf = '/etc/httpd/conf.d/00-port.conf'
+                else:
+                    apache_port_conf = '/etc/apache2/ports.conf'
+                
+                command = f'''
+                grep -q "Listen 8082" {apache_port_conf} || echo "Listen 8082" >> {apache_port_conf}
+                grep -q "Listen 8083" {apache_port_conf} || echo "Listen 8083" >> {apache_port_conf}
+                '''
+                Upgrade.executioner(command, 'Ensure Apache listens on 8082/8083', 1)
+                
+                # 4. Restart Apache service
+                command = f'systemctl restart {apache_service}'
+                Upgrade.executioner(command, f'Restart {apache_service}', 1)
+                
+                # 5. Fix PHP-FPM socket permissions and restart services
+                for version in ['5.4', '5.5', '5.6', '7.0', '7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3']:
+                    if Upgrade.FindOperatingSytem() in [CENTOS7, CENTOS8, openEuler20, openEuler22]:
+                        php_service = f'php{version.replace(".", "")}-php-fpm'
+                        socket_dir = '/var/run/php-fpm'
+                    else:
+                        php_service = f'php{version}-fpm'
+                        socket_dir = '/var/run/php'
+                    
+                    # Ensure socket directory exists with correct permissions
+                    command = f'''
+                    if systemctl is-active {php_service} >/dev/null 2>&1; then
+                        mkdir -p {socket_dir}
+                        chmod 755 {socket_dir}
+                        systemctl restart {php_service}
+                    fi
+                    '''
+                    Upgrade.executioner(command, f'Fix and restart {php_service}', 1)
+                
+                # 6. Reload LiteSpeed to apply proxy changes
+                command = '/usr/local/lsws/bin/lswsctrl reload'
+                Upgrade.executioner(command, 'Reload LiteSpeed', 1)
+                
+                Upgrade.stdOut("Apache configuration fixes completed.")
+            else:
+                Upgrade.stdOut("Apache not detected, skipping Apache fixes.")
+                
+        except Exception as e:
+            Upgrade.stdOut(f"Error fixing Apache configuration: {str(e)}")
+            pass
+
+    @staticmethod
+    def installQuota():
+        try:
+
+            if Upgrade.FindOperatingSytem() == CENTOS7 or Upgrade.FindOperatingSytem() == CENTOS8\
+                    or Upgrade.FindOperatingSytem() == openEuler20 or Upgrade.FindOperatingSytem() == openEuler22:
+                command = "yum install quota -y"
+                Upgrade.executioner(command, command, 0, True)
+
+                if Upgrade.edit_fstab('/', '/') == 0:
+                    print("Quotas will not be abled as we failed to modify fstab file.")
+                    return 0
+
+
+                command = 'mount -o remount /'
+                try:
+                    mResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                except:
+                    mResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            universal_newlines=True, shell=True)
+
+                if mResult.returncode != 0:
+                    fstab_path = '/etc/fstab'
+                    backup_path = fstab_path + '.bak'
+                    if os.path.exists(fstab_path):
+                        os.remove(fstab_path)
+                    shutil.copy(backup_path, fstab_path)
+
+                    print("Re-mount failed, restoring original FSTab and existing quota setup.")
+                    return 0
+
+            ##
+
+            if Upgrade.FindOperatingSytem() == Ubuntu22 or Upgrade.FindOperatingSytem() == Ubuntu18 \
+                    or Upgrade.FindOperatingSytem() == Ubuntu20:
+
+                print("Install Quota on Ubuntu")
+                command = 'apt update -y'
+                Upgrade.executioner(command, command, 0, True)
+
+                command = 'apt install quota -y'
+                Upgrade.executioner(command, command, 0, True)
+
+                command = "find /lib/modules/ -type f -name '*quota_v*.ko*'"
+
+                try:
+                    output = subprocess.check_output(command, shell=True)
+                    if output and output.decode("utf-8").find("quota/") == -1:
+                        command = "sudo apt install linux-image-extra-virtual -y"
+                        Upgrade.executioner(command, command, 0, True)
+                except Exception as e:
+                    Upgrade.stdOut(f"Error checking quota modules: {str(e)}")
+
+                if Upgrade.edit_fstab('/', '/') == 0:
+                    print("Quotas will not be abled as we are are failed to modify fstab file.")
+                    return 0
+
+                command = 'mount -o remount /'
+                try:
+                    mResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                except:
+                    mResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                             universal_newlines=True, shell=True)
+                if mResult.returncode != 0:
+                    fstab_path = '/etc/fstab'
+                    backup_path = fstab_path + '.bak'
+                    if os.path.exists(fstab_path):
+                        os.remove(fstab_path)
+                    shutil.copy(backup_path, fstab_path)
+
+                    print("Re-mount failed, restoring original FSTab and existing quota setup.")
+                    return 0
+
+                command = 'quotacheck -ugm /'
+                try:
+                    mResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                except:
+                    mResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                             universal_newlines=True, shell=True)
+                if mResult.returncode != 0:
+                    fstab_path = '/etc/fstab'
+                    backup_path = fstab_path + '.bak'
+                    if os.path.exists(fstab_path):
+                        os.remove(fstab_path)
+                    shutil.copy(backup_path, fstab_path)
+
+                    print("Re-mount failed, restoring original FSTab and existing quota setup.")
+                    return 0
+
+                ####
+
+                command = "find /lib/modules/ -type f -name '*quota_v*.ko*'"
+                try:
+                    iResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                except:
+                    iResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                             universal_newlines=True, shell=True)
+                print(repr(iResult.stdout))
+
+                # Only if the first command works, run the rest
+
+                if iResult.returncode == 0:
+                    command = "echo '{}' | sed -n 's|/lib/modules/\\([^/]*\\)/.*|\\1|p' | sort -u".format(iResult.stdout)
+                    try:
+                        result = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                    except:
+                        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                 universal_newlines=True, shell=True)
+                    fResult = result.stdout.rstrip('\n')
+                    print(repr(result.stdout.rstrip('\n')))
+
+                    command  = 'uname -r'
+                    try:
+                        ffResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                    except:
+                        ffResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                universal_newlines=True, shell=True)
+                    ffResult = ffResult.stdout.rstrip('\n')
+
+                    command = f"apt-get install linux-modules-extra-{ffResult}"
+                    Upgrade.executioner(command, command, 0, True)
+
+                ###
+
+                    command = f'modprobe quota_v1 -S {ffResult}'
+                    try:
+                        mResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                    except:
+                        mResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                  universal_newlines=True, shell=True)
+                    if mResult.returncode != 0:
+                        fstab_path = '/etc/fstab'
+                        backup_path = fstab_path + '.bak'
+                        if os.path.exists(fstab_path):
+                            os.remove(fstab_path)
+                        shutil.copy(backup_path, fstab_path)
+
+                        print("Re-mount failed, restoring original FSTab and existing quota setup.")
+                        return 0
+
+                    command = f'modprobe quota_v2 -S {ffResult}'
+                    try:
+                        mResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+                    except:
+                        mResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                 universal_newlines=True, shell=True)
+                    if mResult.returncode != 0:
+                        fstab_path = '/etc/fstab'
+                        backup_path = fstab_path + '.bak'
+                        if os.path.exists(fstab_path):
+                            os.remove(fstab_path)
+                        shutil.copy(backup_path, fstab_path)
+
+                        print("Re-mount failed, restoring original FSTab and existing quota setup.")
+                        return 0
+
+            command = f'quotacheck -ugm /'
+            try:
+                mResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+            except:
+                mResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         universal_newlines=True, shell=True)
+            if mResult.returncode != 0:
+                fstab_path = '/etc/fstab'
+                backup_path = fstab_path + '.bak'
+                if os.path.exists(fstab_path):
+                    os.remove(fstab_path)
+                shutil.copy(backup_path, fstab_path)
+
+                print("Re-mount failed, restoring original FSTab and existing quota setup.")
+                return 0
+
+            command = f'quotaon -v /'
+            try:
+                mResult = subprocess.run(command, capture_output=True, universal_newlines=True, shell=True)
+            except:
+                mResult = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         universal_newlines=True, shell=True)
+            if mResult.returncode != 0:
+                fstab_path = '/etc/fstab'
+                backup_path = fstab_path + '.bak'
+                if os.path.exists(fstab_path):
+                    os.remove(fstab_path)
+                shutil.copy(backup_path, fstab_path)
+
+                print("Re-mount failed, restoring original FSTab and existing quota setup.")
+                return 0
+
+            return 1
+
+        except BaseException as msg:
+            print("[ERROR] installQuota. " + str(msg))
+            return 0
+
+    @staticmethod
+    def edit_fstab(mount_point, options_to_add):
+        try:
+            retValue = 1
+            # Backup the original fstab file
+            fstab_path = '/etc/fstab'
+            backup_path = fstab_path + '.bak'
+
+            rData = open(fstab_path, 'r').read()
+
+            if rData.find('xfs') > -1:
+                options_to_add = 'uquota'
+            else:
+                options_to_add = 'usrquota,grpquota'
+
+            if not os.path.exists(backup_path):
+                shutil.copy(fstab_path, backup_path)
+
+            # Read the fstab file
+            with open(fstab_path, 'r') as file:
+                lines = file.readlines()
+
+            # Modify the appropriate line
+            WriteToFile = open(fstab_path, 'w')
+            for i, line in enumerate(lines):
+
+                if line.find('\t') > -1:
+                    parts = line.split('\t')
+                else:
+                    parts = line.split(' ')
+
+                print(parts)
+                try:
+                    if parts[1] == '/' and parts[3].find(options_to_add) == -1 and len(parts[3]) > 4:
+
+                        parts[3] = f'{parts[3]},{options_to_add}'
+                        tempParts = [item for item in parts if item.strip()]
+                        finalString = '\t'.join(tempParts)
+                        print(finalString)
+                        WriteToFile.write(finalString)
+
+                    elif parts[1] == '/':
+
+                        for ii, p in enumerate(parts):
+                            if p.find('defaults') > -1 or p.find('discard') > -1 or p.find('errors=') > -1:
+                                parts[ii] = f'{parts[ii]},{options_to_add}'
+                                tempParts = [item for item in parts if item.strip()]
+                                finalString = '\t'.join(tempParts)
+                                print(finalString)
+                                WriteToFile.write(finalString)
+                    else:
+                        WriteToFile.write(line)
+                except:
+                    WriteToFile.write(line)
+
+            WriteToFile.close()
+
+            return retValue
+        except:
+            return 0
+
+
+    @staticmethod
+    def FixCurrentQuoatasSystem():
+        fstab_path = '/etc/fstab'
+
+        data = open(fstab_path, 'r').read()
+
+        if data.find("usrquota,grpquota") > -1 or data.find("uquota") > -1:
+            print("Quotas already enabled.")
+
+
+        if Upgrade.installQuota() == 1:
+
+            print("We will attempt to bring new Quota system to old websites.")
+            from websiteFunctions.models import Websites
+            for website in Websites.objects.all():
+
+                command = 'chattr -R -i /home/%s/' % (website.domain)
+                Upgrade.executioner(command, command, 0, True)
+
+                if website.package.enforceDiskLimits:
+                    spaceString = f'{website.package.diskSpace}M {website.package.diskSpace}M'
+                    command = f'setquota -u {website.externalApp} {spaceString} 0 0 /'
+                    Upgrade.executioner(command, command, 0, True)
+
+        else:
+            print("Quotas can not be enabled continue to use chhtr.")
+
+    @staticmethod
+    def installDNS_CyberPanelACMEFile():
+        filePath = '/root/.acme.sh/dns_cyberpanel.sh'
+        if os.path.exists(filePath):
+            os.remove(filePath)
+        shutil.copy('/usr/local/CyberCP/install/dns_cyberpanel.sh', filePath)
+
+        command = f'chmod +x {filePath}'
+        Upgrade.executioner(command, command, 0, True)
+
+    @staticmethod
+    def fixApacheConfiguration():
+        """
+        Fix Apache configuration issues after upgrade, particularly for 503 errors
+        when Apache is used as reverse proxy to OpenLiteSpeed
+        """
+        try:
+            print("Starting Apache configuration fix...")
+            
+            # Check if Apache is installed
+            osType = Upgrade.FindOperatingSytem()
+            if osType in [CENTOS7, CENTOS8, CloudLinux7, CloudLinux8]:
+                configBasePath = '/etc/httpd/conf.d/'
+                serviceName = 'httpd'
+            else:
+                configBasePath = '/etc/apache2/sites-enabled/'
+                serviceName = 'apache2'
+            
+            if not os.path.exists(configBasePath):
+                print("Apache not installed, skipping Apache fixes.")
+                return
+            
+            # Import required modules
+            from websiteFunctions.models import Websites
+            import re
+            
+            # Fix 1: Update Apache proxy configurations for domains actually using Apache
+            print("Fixing Apache proxy configurations...")
+            fixed_count = 0
+            apache_domains = []
+            
+            # First, identify which domains are using Apache by checking for Apache vhost configs
+            for config_file in os.listdir(configBasePath):
+                if config_file.endswith('.conf'):
+                    # Extract domain name from config file
+                    domain_name = config_file.replace('.conf', '')
+                    config_path = os.path.join(configBasePath, config_file)
+                    
+                    try:
+                        # Read the configuration to verify it's an Apache proxy setup
+                        with open(config_path, 'r') as f:
+                            content = f.read()
+                        
+                        # Check if this is actually an Apache proxy configuration
+                        # Look for common Apache proxy indicators
+                        is_apache_proxy = False
+                        if 'ProxyPass' in content and ('127.0.0.1:8082' in content or '127.0.0.1:8083' in content):
+                            is_apache_proxy = True
+                        elif 'RewriteRule' in content and 'apachebackend' in content:
+                            is_apache_proxy = True
+                        elif '<FilesMatch' in content and 'SetHandler' in content and 'proxy:unix:' in content:
+                            is_apache_proxy = True
+                        
+                        if is_apache_proxy:
+                            apache_domains.append(domain_name)
+                            modified = False
+                            
+                            # Fix the proxy rewrite rules - add missing HTTPS condition
+                            if 'RewriteRule ^/(.*)$ http://apachebackend/$1 [P,L]' in content and 'RewriteCond %{HTTPS} off' not in content:
+                                # Find the RewriteRule for HTTP proxy
+                                lines = content.split('\n')
+                                new_lines = []
+                                i = 0
+                                while i < len(lines):
+                                    line = lines[i]
+                                    if 'RewriteRule ^/(.*)$ http://apachebackend/$1 [P,L]' in line:
+                                        # Add the missing HTTPS condition before the rule
+                                        indent = len(line) - len(line.lstrip())
+                                        new_lines.append(' ' * indent + 'RewriteCond %{HTTPS} off')
+                                        new_lines.append(line)
+                                        modified = True
+                                    else:
+                                        new_lines.append(line)
+                                    i += 1
+                                
+                                if modified:
+                                    content = '\n'.join(new_lines)
+                            
+                            # Write back if modified
+                            if modified:
+                                with open(config_path, 'w') as f:
+                                    f.write(content)
+                                fixed_count += 1
+                                print(f"Fixed Apache configuration for: {config_file}")
+                    
+                    except Exception as e:
+                        print(f"Error processing {config_file}: {str(e)}")
+            
+            print(f"Found {len(apache_domains)} domains using Apache")
+            print(f"Fixed {fixed_count} Apache configurations.")
+            
+            # If no domains are using Apache, skip the rest of the fixes
+            if len(apache_domains) == 0:
+                print("No domains found using Apache as reverse proxy. Skipping remaining Apache fixes.")
+                return
+            
+            # Fix 2: Ensure Apache proxy backends are configured in OLS/LSWS
+            print("Checking OpenLiteSpeed proxy backend configurations...")
+            lsws_config = "/usr/local/lsws/conf/httpd_config.conf"
+            
+            if os.path.exists(lsws_config):
+                with open(lsws_config, 'r') as f:
+                    lsws_content = f.read()
+                
+                modified = False
+                
+                # Check for apachebackend extprocessor
+                if 'extprocessor apachebackend' not in lsws_content:
+                    # Add apachebackend configuration
+                    backend_config = '''
+extprocessor apachebackend {
+  type                    proxy
+  address                 127.0.0.1:8082
+  maxConns                100
+  initTimeout             60
+  retryTimeout            60
+  respBuffer              0
+}
+'''
+                    lsws_content += backend_config
+                    modified = True
+                    print("Added apachebackend extprocessor configuration")
+                
+                # Check for proxyApacheBackendSSL extprocessor
+                if 'extprocessor proxyApacheBackendSSL' not in lsws_content:
+                    # Add proxyApacheBackendSSL configuration
+                    ssl_backend_config = '''
+extprocessor proxyApacheBackendSSL {
+  type                    proxy
+  address                 https://127.0.0.1:8083
+  maxConns                100
+  initTimeout             60
+  retryTimeout            60
+  respBuffer              0
+}
+'''
+                    lsws_content += ssl_backend_config
+                    modified = True
+                    print("Added proxyApacheBackendSSL extprocessor configuration")
+                
+                if modified:
+                    with open(lsws_config, 'w') as f:
+                        f.write(lsws_content)
+                    print("Updated OpenLiteSpeed configuration with Apache proxy backends")
+            
+            # Fix 3: Create/Update .htaccess files ONLY for domains actually using Apache
+            print("Creating/Updating .htaccess files for Apache domains...")
+            htaccess_fixed = 0
+            htaccess_created = 0
+            
+            # Only process domains that we confirmed are using Apache
+            for domain in apache_domains:
+                try:
+                    htaccess_path = f'/home/{domain}/public_html/.htaccess'
+                    
+                    # Check if .htaccess exists
+                    if os.path.exists(htaccess_path):
+                        with open(htaccess_path, 'r') as f:
+                            htaccess_content = f.read()
+                        
+                        # Check if it's an Apache proxy configuration (case insensitive)
+                        if 'apachebackend' in htaccess_content.lower():
+                            # Check if it has proper HTTP/HTTPS handling
+                            needs_update = False
+                            
+                            # Check for old style single rule
+                            if 'REWRITERULE ^(.*)$ HTTP://apachebackend/$1 [P]' in htaccess_content:
+                                needs_update = True
+                            # Check if missing HTTPS conditions
+                            elif 'RewriteCond %{HTTPS} off' not in htaccess_content or 'proxyApacheBackendSSL' not in htaccess_content:
+                                needs_update = True
+                            
+                            if needs_update:
+                                # Create proper .htaccess with both HTTP and HTTPS handling
+                                new_htaccess = '''RewriteEngine On
+
+# HTTP to backend
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ http://apachebackend/$1 [P,L]
+
+# HTTPS to SSL backend  
+RewriteCond %{HTTPS} on
+RewriteRule ^(.*)$ https://proxyApacheBackendSSL/$1 [P,L]
+'''
+                                with open(htaccess_path, 'w') as f:
+                                    f.write(new_htaccess)
+                                htaccess_fixed += 1
+                                print(f"Fixed .htaccess for: {domain}")
+                    else:
+                        # .htaccess doesn't exist - this domain might be missing it!
+                        # Create the proper .htaccess file
+                        print(f"Creating missing .htaccess for Apache domain: {domain}")
+                        
+                        # Ensure public_html exists
+                        public_html_path = f'/home/{domain}/public_html'
+                        if os.path.exists(public_html_path):
+                            new_htaccess = '''RewriteEngine On
+
+# HTTP to backend
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ http://apachebackend/$1 [P,L]
+
+# HTTPS to SSL backend  
+RewriteCond %{HTTPS} on
+RewriteRule ^(.*)$ https://proxyApacheBackendSSL/$1 [P,L]
+'''
+                            with open(htaccess_path, 'w') as f:
+                                f.write(new_htaccess)
+                            
+                            # Set proper permissions
+                            try:
+                                website = Websites.objects.get(domain=domain)
+                                command = f'chown {website.externalApp}:{website.externalApp} {htaccess_path}'
+                                Upgrade.executioner(command, command, 0, True)
+                            except:
+                                pass
+                            
+                            htaccess_created += 1
+                            print(f"Created .htaccess for: {domain}")
+                        else:
+                            print(f"Warning: public_html not found for domain: {domain}")
+                            
+                except Exception as e:
+                    print(f"Error updating .htaccess for {domain}: {str(e)}")
+            
+            print(f"Fixed {htaccess_fixed} .htaccess files.")
+            print(f"Created {htaccess_created} missing .htaccess files.")
+            
+            # Fix 3b: Also fix OpenLiteSpeed vhost configurations that might have incorrect rewrite rules
+            print("Fixing OpenLiteSpeed vhost configurations for Apache domains...")
+            ols_fixed = 0
+            
+            for domain in apache_domains:
+                try:
+                    ols_vhost_path = f'/usr/local/lsws/conf/vhosts/{domain}/vhost.conf'
+                    
+                    if os.path.exists(ols_vhost_path):
+                        with open(ols_vhost_path, 'r') as f:
+                            vhost_content = f.read()
+                        
+                        # Check if it has the incorrect rewrite rules
+                        if 'RewriteCond %{HTTPS}  !=on' in vhost_content and 'HTTP://proxyApacheBackendSSL' in vhost_content:
+                            # This has the buggy configuration where HTTPS rule doesn't have proper condition
+                            modified = False
+                            
+                            # Replace the buggy rewrite section
+                            buggy_pattern = r'rewrite\s*{\s*enable\s*1\s*rules\s*<<<END_rules\s*RewriteEngine On\s*RewriteCond %{HTTPS}\s*!=on\s*REWRITERULE \^\(\.\*\)\$ HTTP://apachebackend/\$1 \[P,L\]\s*REWRITERULE \^\(\.\*\)\$ HTTP://proxyApacheBackendSSL/\$1 \[P,L\]\s*END_rules\s*}'
+                            
+                            correct_rewrite = '''rewrite  {
+  enable                  1
+  rules                   <<<END_rules
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ http://apachebackend/$1 [P,L]
+RewriteCond %{HTTPS} on
+RewriteRule ^(.*)$ https://proxyApacheBackendSSL/$1 [P,L]
+  END_rules
+}'''
+                            
+                            # Use a simpler approach - find and replace the section
+                            import re
+                            if isinstance(vhost_content, str) and vhost_content:
+                                new_content = re.sub(
+                                    r'rewrite\s*{[^}]+}',
+                                    correct_rewrite,
+                                    vhost_content,
+                                    count=1
+                                )
+                            else:
+                                new_content = vhost_content
+                            
+                            if new_content != vhost_content:
+                                with open(ols_vhost_path, 'w') as f:
+                                    f.write(new_content)
+                                ols_fixed += 1
+                                print(f"Fixed OLS vhost configuration for: {domain}")
+                        
+                except Exception as e:
+                    print(f"Error fixing OLS vhost for {domain}: {str(e)}")
+            
+            if ols_fixed > 0:
+                print(f"Fixed {ols_fixed} OpenLiteSpeed vhost configurations.")
+            
+            # Fix 4: Ensure Apache is listening on correct ports
+            if osType in [CENTOS7, CENTOS8, CloudLinux7, CloudLinux8]:
+                apache_conf = '/etc/httpd/conf/httpd.conf'
+            else:
+                ports_conf = '/etc/apache2/ports.conf'
+                apache_conf = ports_conf if os.path.exists(ports_conf) else '/etc/apache2/apache2.conf'
+            
+            if os.path.exists(apache_conf):
+                with open(apache_conf, 'r') as f:
+                    conf_content = f.read()
+                
+                # Check if Apache is configured to listen on 8082 and 8083
+                if 'Listen 8082' not in conf_content or 'Listen 8083' not in conf_content:
+                    print("Fixing Apache listen ports...")
+                    
+                    # For Ubuntu/Debian, update ports.conf
+                    if osType not in [CENTOS7, CENTOS8, CloudLinux7, CloudLinux8]:
+                        if os.path.exists('/etc/apache2/ports.conf'):
+                            with open('/etc/apache2/ports.conf', 'w') as f:
+                                f.write('Listen 8082\nListen 8083\n')
+                    else:
+                        # For CentOS, update httpd.conf
+                        lines = conf_content.split('\n')
+                        new_lines = []
+                        listen_added = False
+                        
+                        for line in lines:
+                            if line.strip().startswith('Listen') and '80' in line and not listen_added:
+                                new_lines.append('Listen 8082')
+                                new_lines.append('Listen 8083')
+                                listen_added = True
+                            elif 'Listen 8082' not in line and 'Listen 8083' not in line:
+                                new_lines.append(line)
+                        
+                        with open(apache_conf, 'w') as f:
+                            f.write('\n'.join(new_lines))
+                    
+                    print("Fixed Apache listen ports")
+            
+            # Fix 5: Fix PHP-FPM socket permissions
+            print("Fixing PHP-FPM socket permissions...")
+            if osType in [CENTOS7, CENTOS8, CloudLinux7, CloudLinux8]:
+                sock_path = '/var/run/php-fpm/'
+            else:
+                sock_path = '/var/run/php/'
+            
+            if os.path.exists(sock_path):
+                # Set proper permissions
+                command = f'chmod 755 {sock_path}'
+                Upgrade.executioner(command, command, 0, True)
+                
+                # Fix ownership
+                command = f'chown apache:apache {sock_path}' if osType in [CENTOS7, CENTOS8, CloudLinux7, CloudLinux8] else f'chown www-data:www-data {sock_path}'
+                Upgrade.executioner(command, command, 0, True)
+            
+            # Restart services
+            print("Restarting services...")
+            
+            # Restart Apache
+            command = f'systemctl restart {serviceName}'
+            Upgrade.executioner(command, command, 0, True)
+            
+            # Restart OpenLiteSpeed
+            command = 'systemctl restart lsws'
+            Upgrade.executioner(command, command, 0, True)
+            
+            # Restart PHP-FPM services
+            if osType in [CENTOS7, CENTOS8, CloudLinux7, CloudLinux8]:
+                for version in ['54', '55', '56', '70', '71', '72', '73', '74', '80', '81', '82', '83', '84']:
+                    command = f'systemctl restart php{version}-php-fpm'
+                    Upgrade.executioner(command, command, 0, True)
+            else:
+                for version in ['5.6', '7.0', '7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3']:
+                    command = f'systemctl restart php{version}-fpm'
+                    Upgrade.executioner(command, command, 0, True)
+            
+            print("Apache configuration fix completed successfully!")
+            
+        except Exception as e:
+            print(f"Error during Apache configuration fix: {str(e)}")
+
 
 
 def main():

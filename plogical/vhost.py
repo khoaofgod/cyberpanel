@@ -25,7 +25,7 @@ from managePHP.phpManager import PHPManager
 from plogical.vhostConfs import vhostConfs
 from ApachController.ApacheVhosts import ApacheVhost
 try:
-    from websiteFunctions.models import Websites, ChildDomains, aliasDomains
+    from websiteFunctions.models import Websites, ChildDomains, aliasDomains, DockerSites
     from databases.models import Databases
 except:
     pass
@@ -246,6 +246,7 @@ class vhost:
                     currentConf = currentConf.replace('{open_basedir}', '')
 
 
+
                 confFile.write(currentConf)
                 confFile.close()
 
@@ -402,6 +403,23 @@ class vhost:
                 ## Child check, to make sure no database entires are being deleted from child node
 
                 if ACLManager.FindIfChild() == 0:
+
+                    ### Delete Docker Sites first before website deletion
+
+                    if os.path.exists('/home/docker/%s' % (virtualHostName)):
+                        try:
+                            dockerSite = DockerSites.objects.get(admin__domain=virtualHostName)
+                            passdata = {
+                                "domain": virtualHostName,
+                                "name": dockerSite.SiteName
+                            }
+                            from plogical.DockerSites import Docker_Sites
+                            da = Docker_Sites(None, passdata)
+                            da.DeleteDockerApp()
+                            dockerSite.delete()
+                        except:
+                            # If anything fails in Docker cleanup, at least remove the directory
+                            shutil.rmtree('/home/docker/%s' % (virtualHostName))
 
                     for items in databases:
                         mysqlUtilities.deleteDatabase(items.dbName, items.dbUser)
@@ -628,9 +646,11 @@ class vhost:
         #HomePath = website.externalApp
         virtualHostUser = externalApp
 
+        logging.CyberCPLogFileWriter.writeToFile(f"PHP version before making sure its available or not: {phpVersion} and vhFile: {vhFile}")
+
         from plogical.phpUtilities import phpUtilities
 
-        phpVersion = phpUtilities.FindIfSaidPHPIsAvaiableOtherwiseMaketheNextOneAvailableToUse(vhFile, phpVersion)
+        phpVersion = phpUtilities.FindIfSaidPHPIsAvaiableOtherwiseMaketheNextOneAvailableToUse(None, phpVersion)
 
         phpDetachUpdatePath = '/home/%s/.lsphp_restart.txt' % (vhFile.split('/')[-2])
         if ProcessUtilities.decideServer() == ProcessUtilities.OLS:
@@ -647,6 +667,8 @@ class vhost:
                     writeDataToFile = open(vhFile, "w")
 
                     path = "  path                    /usr/local/lsws/lsphp" + str(php) + "/bin/lsphp\n"
+
+                    logging.CyberCPLogFileWriter.writeToFile(f"PHP String to be written {path}")
 
                     for items in data:
                         if items.find("/usr/local/lsws/lsphp") > -1 and items.find("path") > -1:

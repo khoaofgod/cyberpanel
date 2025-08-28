@@ -448,6 +448,7 @@ class IncScheduler(multi.Thread):
                                             logging.writeToFile(f'Retention time {timerrtention}')
                                         except:
                                             print(f'Retention time not defined.')
+                                            timerrtention = '6m'
 
                                         if (timerrtention == '1d'):
                                             new = CUrrenttimestamp - float(86400)
@@ -618,8 +619,11 @@ Automatic backup failed for %s on %s.
                                                     domain, time.strftime("%m.%d.%Y_%H-%M-%S"))).save()
 
                     jobConfig = json.loads(backupjob.config)
-                    if jobConfig['pid']:
-                        del jobConfig['pid']
+                    try:
+                        if jobConfig['pid']:
+                            del jobConfig['pid']
+                    except:
+                        pass
                     jobConfig[IncScheduler.currentStatus] = 'Not running'
                     backupjob.config = json.dumps(jobConfig)
                     backupjob.save()
@@ -652,22 +656,87 @@ Automatic backup failed for %s on %s.
                     except BaseException as msg:
                         NormalBackupJobLogs(owner=backupjob, status=backupSchedule.INFO,
                                             message=f'Failed to make sftp connection {str(msg)}').save()
+
                         print(str(msg))
                         continue
+
+                    # Always try SSH commands first
+                    ssh_commands_supported = True
+                    
+                    try:
+                        command = f'find cpbackups -type f -mtime +{jobConfig["retention"]} -exec rm -f {{}} \\;'
+                        logging.writeToFile(command)
+                        ssh.exec_command(command)
+                        command = 'find cpbackups -type d -empty -delete'
+                        ssh.exec_command(command)
+
+                    except BaseException as msg:
+                        logging.writeToFile(f'Failed to delete old backups, Error {str(msg)}')
+                        pass
+
                     # Execute the command to create the remote directory
                     command = f'mkdir -p {finalPath}'
-                    stdin, stdout, stderr = ssh.exec_command(command)
-
-                    # Wait for the command to finish and check for any errors
-                    stdout.channel.recv_exit_status()
-                    error_message = stderr.read().decode('utf-8')
-                    print(error_message)
-                    if error_message:
-                        NormalBackupJobLogs(owner=backupjob, status=backupSchedule.INFO,
-                                            message=f'Error while creating directory on remote server {error_message.strip()}').save()
-                        continue
-                    else:
-                        pass
+                    try:
+                        stdin, stdout, stderr = ssh.exec_command(command, timeout=10)
+                        # Wait for the command to finish and check for any errors
+                        exit_status = stdout.channel.recv_exit_status()
+                        error_message = stderr.read().decode('utf-8')
+                        print(error_message)
+                        
+                        # Check if command was rejected (SFTP-only server)
+                        if exit_status != 0 or "not allowed" in error_message.lower() or "channel closed" in error_message.lower():
+                            ssh_commands_supported = False
+                            logging.writeToFile(f'SSH command failed on {destinationConfig["ip"]}, falling back to pure SFTP mode')
+                            
+                            # Try creating directory via SFTP
+                            try:
+                                sftp = ssh.open_sftp()
+                                # Try to create the directory structure
+                                path_parts = finalPath.strip('/').split('/')
+                                current_path = ''
+                                for part in path_parts:
+                                    current_path = current_path + '/' + part if current_path else part
+                                    try:
+                                        sftp.stat(current_path)
+                                    except FileNotFoundError:
+                                        try:
+                                            sftp.mkdir(current_path)
+                                        except:
+                                            pass
+                                sftp.close()
+                            except BaseException as msg:
+                                logging.writeToFile(f'Failed to create directory via SFTP: {str(msg)}')
+                                pass
+                        elif error_message:
+                            NormalBackupJobLogs(owner=backupjob, status=backupSchedule.INFO,
+                                                message=f'Error while creating directory on remote server {error_message.strip()}').save()
+                            continue
+                        else:
+                            pass
+                    except BaseException as msg:
+                        # SSH command failed, try SFTP
+                        ssh_commands_supported = False
+                        logging.writeToFile(f'SSH command failed: {str(msg)}, falling back to pure SFTP mode')
+                        
+                        # Try creating directory via SFTP
+                        try:
+                            sftp = ssh.open_sftp()
+                            # Try to create the directory structure
+                            path_parts = finalPath.strip('/').split('/')
+                            current_path = ''
+                            for part in path_parts:
+                                current_path = current_path + '/' + part if current_path else part
+                                try:
+                                    sftp.stat(current_path)
+                                except FileNotFoundError:
+                                    try:
+                                        sftp.mkdir(current_path)
+                                    except:
+                                        pass
+                            sftp.close()
+                        except BaseException as msg:
+                            logging.writeToFile(f'Failed to create directory via SFTP: {str(msg)}')
+                            pass
 
 
                     ### Check if an old job prematurely killed, then start from there.
@@ -771,10 +840,30 @@ Automatic backup failed for %s on %s.
                         else:
                             backupPath = retValues[1] + ".tar.gz"
 
+                            # Always try scp first
                             command = "scp -o StrictHostKeyChecking=no -P " + destinationConfig[
                                 'port'] + " -i /root/.ssh/cyberpanel " + backupPath + " " + destinationConfig[
                                           'username'] + "@" + destinationConfig['ip'] + ":%s" % (finalPath)
-                            ProcessUtilities.executioner(command)
+                            
+                            try:
+                                result = ProcessUtilities.executioner(command)
+                                # Check if scp failed (common with SFTP-only servers)
+                                if not ssh_commands_supported or result != 0:
+                                    raise Exception("SCP failed, trying SFTP")
+                            except:
+                                # If scp fails or SSH commands are not supported, use SFTP
+                                logging.writeToFile(f'SCP failed for {destinationConfig["ip"]}, falling back to SFTP transfer')
+                                try:
+                                    sftp = ssh.open_sftp()
+                                    remote_path = os.path.join(finalPath, os.path.basename(backupPath))
+                                    sftp.put(backupPath, remote_path)
+                                    sftp.close()
+                                    logging.writeToFile(f'Successfully transferred {backupPath} to {remote_path} via SFTP')
+                                except BaseException as msg:
+                                    logging.writeToFile(f'Failed to transfer backup via SFTP: {str(msg)}')
+                                    NormalBackupJobLogs(owner=backupjob, status=backupSchedule.ERROR,
+                                                        message='Backup transfer failed for %s: %s' % (domain, str(msg))).save()
+                                    continue
 
                             try:
                                 os.remove(backupPath)
@@ -794,6 +883,97 @@ Automatic backup failed for %s on %s.
                     jobConfig[IncScheduler.currentStatus] = 'Not running'
                     backupjob.config = json.dumps(jobConfig)
                     backupjob.save()
+
+
+                    ### check if todays backups are fine
+
+                    from IncBackups.models import OneClickBackups
+
+                    try:
+
+                        ocb = OneClickBackups.objects.get(sftpUser=destinationConfig['username'])
+                        from plogical.acl import ACLManager
+
+                        for site in websites:
+
+                            from datetime import datetime, timedelta
+
+                            Yesterday = (datetime.now() - timedelta(days=1)).strftime("%m.%d.%Y")
+                            print(f'date of yesterday {Yesterday}')
+
+                            # Command to list directories under the specified path
+                            command = f"ls -d {finalPath}/*"
+
+                            # Try SSH command first
+                            directories = []
+                            try:
+                                # Execute the command
+                                stdin, stdout, stderr = ssh.exec_command(command, timeout=10)
+
+                                # Read the results
+                                directories = stdout.read().decode().splitlines()
+                            except:
+                                # If SSH command fails, try using SFTP
+                                logging.writeToFile(f'SSH ls command failed for {destinationConfig["ip"]}, trying SFTP listdir')
+                                try:
+                                    sftp = ssh.open_sftp()
+                                    # List files in the directory
+                                    files = sftp.listdir(finalPath)
+                                    # Format them similar to ls -d output
+                                    directories = [f"{finalPath}/{f}" for f in files]
+                                    sftp.close()
+                                except BaseException as msg:
+                                    logging.writeToFile(f'Failed to list directory via SFTP: {str(msg)}')
+                                    directories = []
+
+                            if os.path.exists(ProcessUtilities.debugPath):
+                                logging.writeToFile(str(directories))
+
+                            try:
+
+                                startCheck = 0
+                                for directory in directories:
+                                    if directory.find(site.domain):
+                                        print(f'site in backup, no need to notify {site.domain}')
+                                        startCheck = 1
+                                        break
+
+                                if startCheck:
+                                    'send notification that backup failed'
+                                    import requests
+
+                                    # Define the URL of the endpoint
+                                    url = 'http://platform.cyberpersons.com/Billing/BackupFailedNotify'  # Replace with your actual endpoint URL
+
+                                    # Define the payload to send in the POST request
+                                    payload = {
+                                        'sub': ocb.subscription,
+                                        'subject': f'Failed to backup {site.domain} on {ACLManager.fetchIP()}.',
+                                        'message':f'Hi, \n\n Failed to create backup for {site.domain} on on {ACLManager.fetchIP()}. \n\n Please contact our support team at: http://platform.cyberpersons.com\n\nThank you.',
+                                        # Replace with the actual SSH public key
+                                        'sftpUser': ocb.sftpUser,
+                                        'serverIP': ACLManager.fetchIP(),  # Replace with the actual server IP
+                                    }
+
+                                    # Convert the payload to JSON format
+                                    headers = {'Content-Type': 'application/json'}
+                                    dataRet = json.dumps(payload)
+
+                                    # Make the POST request
+                                    response = requests.post(url, headers=headers, data=dataRet)
+
+                                    # # Handle the response
+                                    # # Handle the response
+                                    # if response.status_code == 200:
+                                    #     response_data = response.json()
+                                    #     if response_data.get('status') == 1:
+                            except:
+                                pass
+
+                    except:
+                        pass
+
+
 
     @staticmethod
     def fetchAWSKeys():
@@ -953,25 +1133,28 @@ Automatic backup failed for %s on %s.
                 config['DiskUsage'], config['DiskUsagePercentage'] = virtualHostUtilities.getDiskUsage(
                     "/home/" + website.domain, website.package.diskSpace)
 
-                if website.package.enforceDiskLimits:
-                    if config['DiskUsagePercentage'] >= 100:
-                        command = 'chattr -R +i /home/%s/' % (website.domain)
-                        ProcessUtilities.executioner(command)
-
-                        command = 'chattr -R -i /home/%s/logs/' % (website.domain)
-                        ProcessUtilities.executioner(command)
-
-                        command = 'chattr -R -i /home/%s/.trash/' % (website.domain)
-                        ProcessUtilities.executioner(command)
-
-                        command = 'chattr -R -i /home/%s/backup/' % (website.domain)
-                        ProcessUtilities.executioner(command)
-
-                        command = 'chattr -R -i /home/%s/incbackup/' % (website.domain)
-                        ProcessUtilities.executioner(command)
-                    else:
-                        command = 'chattr -R -i /home/%s/' % (website.domain)
-                        ProcessUtilities.executioner(command)
+                # if website.package.enforceDiskLimits:
+                #     spaceString = f'{website.package.diskSpace}M {website.package.diskSpace}M'
+                #     command = f'setquota -u {website.externalApp} {spaceString} 0 0 /'
+                #     ProcessUtilities.executioner(command)
+                #     if config['DiskUsagePercentage'] >= 100:
+                #         command = 'chattr -R +i /home/%s/' % (website.domain)
+                #         ProcessUtilities.executioner(command)
+                #
+                #         command = 'chattr -R -i /home/%s/logs/' % (website.domain)
+                #         ProcessUtilities.executioner(command)
+                #
+                #         command = 'chattr -R -i /home/%s/.trash/' % (website.domain)
+                #         ProcessUtilities.executioner(command)
+                #
+                #         command = 'chattr -R -i /home/%s/backup/' % (website.domain)
+                #         ProcessUtilities.executioner(command)
+                #
+                #         command = 'chattr -R -i /home/%s/incbackup/' % (website.domain)
+                #         ProcessUtilities.executioner(command)
+                #     else:
+                #         command = 'chattr -R -i /home/%s/' % (website.domain)
+                #         ProcessUtilities.executioner(command)
 
                 ## Calculate bw usage
 
@@ -1023,18 +1206,18 @@ Automatic backup failed for %s on %s.
     @staticmethod
     def RemoteBackup(function):
         try:
-            # print("....start remote backup...............")
+            print("....start remote backup...............")
             from websiteFunctions.models import RemoteBackupSchedule, RemoteBackupsites, WPSites
             from loginSystem.models import Administrator
             import json
             import time
             from plogical.applicationInstaller import ApplicationInstaller
             for config in RemoteBackupSchedule.objects.all():
-                # print("....start remote backup........site.......%s"%config.Name)
+                print("....start remote backup........site.......%s"%config.Name)
                 try:
                     configbakup = json.loads(config.config)
                     backuptype = configbakup['BackupType']
-                    # print("....start remote backup........site.......%s.. and bakuptype...%s" % (config.Name, backuptype))
+                    print("....start remote backup........site.......%s.. and bakuptype...%s" % (config.Name, backuptype))
                     if backuptype == 'Only DataBase':
                         Backuptype = "3"
                     elif backuptype == 'Only Website':
@@ -1046,12 +1229,12 @@ Automatic backup failed for %s on %s.
                     continue
                 try:
                     allRemoteBackupsiteobj = RemoteBackupsites.objects.filter(owner=config)
-                    # print("store site id.....%s"%str(allRemoteBackupsiteobj))
+                    print("store site id.....%s"%str(allRemoteBackupsiteobj))
                     for i in allRemoteBackupsiteobj:
                         try:
                             backupsiteID = i.WPsites
                             wpsite = WPSites.objects.get(pk=backupsiteID)
-                            # print("site name.....%s"%wpsite.title)
+                            print("site name.....%s"%wpsite.title)
                             AdminID = wpsite.owner.admin_id
                             Admin = Administrator.objects.get(pk=AdminID)
 
@@ -1294,9 +1477,7 @@ Automatic backup failed for %s on %s.
 
     @staticmethod
     def SendTORemote(FileName, RemoteBackupID):
-        import pysftp
         import json
-        import pysftp as sftp
         from websiteFunctions.models import RemoteBackupConfig
 
         try:
@@ -1307,23 +1488,42 @@ Automatic backup failed for %s on %s.
             Password = config['Password']
             Path = config['Path']
 
-            cnopts = sftp.CnOpts()
-            cnopts.hostkeys = None
+            # Connect to the remote server using the private key
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            with pysftp.Connection(HostName, username=Username, password=Password, cnopts=cnopts) as sftp:
-                print("Connection succesfully stablished ... ")
+            # Connect to the server using the private key
+            ssh.connect(HostName, username=Username, password=Password)
+            sftp = ssh.open_sftp()
+            ssh.exec_command(f'mkdir -p {Path}')
 
-                try:
-                    with sftp.cd(Path):
-                        sftp.put(FileName)
-                except:
-                    sftp.mkdir(Path)
-                    with sftp.cd(Path):
-                        sftp.put(FileName)
+            if os.path.exists(ProcessUtilities.debugPath):
+                logging.writeToFile(f"Filename: {FileName}, Path {Path}/{FileName.split('/')[-1]}. [SendTORemote]")
+
+            sftp.put(FileName, f"{Path}/{FileName.split('/')[-1]}")
+
+            # sftp.get(str(remotepath), str(loaclpath),
+            #          callback=self.UpdateDownloadStatus)
+            #
+            # cnopts = sftp.CnOpts()
+            # cnopts.hostkeys = None
+            #
+            # with pysftp.Connection(HostName, username=Username, password=Password, cnopts=cnopts) as sftp:
+            #     print("Connection succesfully stablished ... ")
+            #
+            #     try:
+            #         with sftp.cd(Path):
+            #             sftp.put(FileName)
+            #     except BaseException as msg:
+            #         print(f'Error on {str(msg)}')
+            #         sftp.mkdir(Path)
+            #         with sftp.cd(Path):
+            #             sftp.put(FileName)
 
 
 
         except BaseException as msg:
+            print('%s. [SendTORemote]' % (str(msg)))
             logging.writeToFile('%s. [SendTORemote]' % (str(msg)))
 
     @staticmethod
@@ -1501,7 +1701,8 @@ Automatic Backupv2 failed for %s on %s.
                                     else:
                                         value['lastRun'] = time.strftime("%m.%d.%Y_%H-%M-%S")
 
-                                    background.DeleteSnapshots(f"--keep-daily {value['retention']}")
+                                    if function == '1 Week':
+                                        background.DeleteSnapshots(f"--keep-daily {value['retention']}")
                             except BaseException as msg:
                                 print("Error: [v2Backups]: %s" % str(msg))
                                 logging.writeToFile('%s. [v2Backups]' % (str(msg)))

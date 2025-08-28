@@ -63,7 +63,9 @@ class CageFS:
             logging.CyberCPLogFileWriter.statusWriter(ServerStatusUtil.lswsInstallStatusPath,
                                                       "Checking if LVE Kernel is loaded ..\n", 1)
 
-            if ProcessUtilities.outputExecutioner('uname -a').find('lve') == -1:
+            if ProcessUtilities.outputExecutioner('uname -a').find('lve') > -1 or ProcessUtilities.outputExecutioner('lsmod').find('lve') > -1:
+                pass
+            else:
                 logging.CyberCPLogFileWriter.statusWriter(ServerStatusUtil.lswsInstallStatusPath,
                                                           "CloudLinux is installed but kernel is not loaded, please reboot your server to load appropriate kernel. [404]\n", 1)
                 return 0
@@ -96,7 +98,16 @@ class CageFS:
             command = 'yum install -y alt-python37-devel'
             ServerStatusUtil.executioner(command, statusFile)
 
+            command = 'yum reinstall -y cloudlinux-venv'
+            ServerStatusUtil.executioner(command, statusFile)
+
             command = 'yum reinstall -y lvemanager lve-utils cagefs'
+            ServerStatusUtil.executioner(command, statusFile)
+
+            command = 'yum reinstall -y cloudlinux-venv'
+            ServerStatusUtil.executioner(command, statusFile)
+
+            command = 'systemctl restart lvemanager'
             ServerStatusUtil.executioner(command, statusFile)
 
             logging.CyberCPLogFileWriter.statusWriter(ServerStatusUtil.lswsInstallStatusPath,
@@ -245,9 +256,6 @@ ui_path_owner = lscpd:lscpd
 
             ### address issue to create imunify dir - https://app.clickup.com/t/86engx249
 
-            command = 'mkdir /usr/local/CyberCP/public/imunifyav'
-            ProcessUtilities.executioner(command)
-
             command = 'pkill -f "bash imav-deploy.sh"'
             ServerStatusUtil.executioner(command, statusFile)
 
@@ -256,6 +264,9 @@ ui_path_owner = lscpd:lscpd
                 ServerStatusUtil.executioner(command, statusFile)
 
             command = 'bash imav-deploy.sh --uninstall --yes'
+            ServerStatusUtil.executioner(command, statusFile)
+
+            command = 'mkdir -p /usr/local/CyberCP/public/imunifyav'
             ServerStatusUtil.executioner(command, statusFile)
 
             command = 'bash imav-deploy.sh --yes'

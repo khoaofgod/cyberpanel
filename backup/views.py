@@ -5,14 +5,16 @@
 import json
 
 from django.shortcuts import redirect
+from django.http import HttpResponse
 
 from backup.backupManager import BackupManager
 from backup.pluginManager import pluginManager
 from loginSystem.views import loadLoginPage
 import os
 from plogical.CyberCPLogFileWriter import CyberCPLogFileWriter as logging
-from django.shortcuts import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.models import User
+from loginSystem.models import Administrator
 
 def loadBackupHome(request):
     try:
@@ -422,9 +424,15 @@ def localInitiate(request):
         data = json.loads(request.body)
         randomFile = data['randomFile']
 
-        if os.path.exists(randomFile):
-            wm = BackupManager()
-            return wm.submitBackupCreation(1, json.loads(request.body))
+        try:
+            randInt = int(randomFile)
+            pathToFile = "/home/cyberpanel/" + randomFile
+
+            if os.path.exists(pathToFile):
+                wm = BackupManager()
+                return wm.submitBackupCreation(1, json.loads(request.body))
+        except:
+            pass
     except BaseException as msg:
         logging.writeToFile(str(msg))
 
@@ -483,3 +491,65 @@ def fetchNormalLogs(request):
         return wm.fetchNormalLogs(request, userID)
     except KeyError:
         return redirect(loadLoginPage)
+
+
+def OneClickBackups(request):
+    try:
+        userID = request.session['userID']
+        bm = BackupManager()
+        return bm.OneClickBackups(request, userID)
+    except KeyError:
+
+        return redirect(loadLoginPage)
+
+def ManageOCBackups(request):
+    try:
+        userID = request.session['userID']
+        bm = BackupManager()
+        return bm.ManageOCBackups(request, userID)
+    except KeyError:
+
+        return redirect(loadLoginPage)
+
+def RestoreOCBackups(request):
+    try:
+        userID = request.session['userID']
+        bm = BackupManager()
+        return bm.RestoreOCBackups(request, userID)
+    except KeyError:
+        return redirect(loadLoginPage)
+
+def fetchOCSites(request):
+    try:
+        userID = request.session['userID']
+        bm = BackupManager()
+        return bm.fetchOCSites(request, userID)
+    except KeyError:
+        return redirect(loadLoginPage)
+
+def StartOCRestore(request):
+    try:
+        userID = request.session['userID']
+        bm = BackupManager()
+        return bm.StartOCRestore(request, userID)
+    except KeyError:
+        return redirect(loadLoginPage)
+
+def DeployAccount(request):
+    try:
+        userID = request.session['userID']
+        bm = BackupManager()
+        return bm.DeployAccount(request, userID)
+    except KeyError:
+        return redirect(loadLoginPage)
+
+def ReconfigureSubscription(request):
+    try:
+        userID = request.session['userID']
+        bm = BackupManager()
+        data = json.loads(request.body)
+        return bm.ReconfigureSubscription(request, userID, data)
+    except BaseException as msg:
+        data_ret = {'status': 0, 'error_message': str(msg)}
+        json_data = json.dumps(data_ret)
+        return HttpResponse(json_data)

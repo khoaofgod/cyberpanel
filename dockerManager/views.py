@@ -99,6 +99,10 @@ def viewContainer(request, name):
 
     except KeyError:
         return redirect(loadLoginPage)
+    except Exception as e:
+        import traceback
+        error_msg = f"Error viewing container {name}: {str(e)}\n{traceback.format_exc()}"
+        return HttpResponse(error_msg, status=500)
 
 @preDockerRun
 def getTags(request):
@@ -421,6 +425,7 @@ def removeImage(request):
         return coreResult
     except KeyError:
         return redirect(loadLoginPage)
+
 @preDockerRun
 def getDockersiteList(request):
     import json

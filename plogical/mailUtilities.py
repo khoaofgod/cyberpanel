@@ -325,21 +325,47 @@ class mailUtilities:
             emailLimits = EmailLimits(email=emailAcct)
             emailLimits.save()
 
-            ### Create email folders manually if they dont exist
+            ### Create maildir structure if it doesn't exist
+            
+            # Create base maildir path
+            maildir_base = f"/home/vmail/{domain}/{userName}"
+            maildir_path = f"{maildir_base}/Maildir"
+            
+            # Create the main maildir structure
+            if not os.path.exists(maildir_path):
+                command = f"mkdir -p '{maildir_path}/cur' '{maildir_path}/new' '{maildir_path}/tmp'"
+                ProcessUtilities.executioner(command, 'vmail')
+                
+                # Set proper permissions
+                command = f"chmod -R 700 '{maildir_base}'"
+                ProcessUtilities.executioner(command, 'vmail')
+                
+                # Ensure ownership is correct
+                command = f"chown -R vmail:vmail '{maildir_base}'"
+                ProcessUtilities.executioner(command, 'root')
 
-            # command = f"mkdir '/home/vmail/{domain}/{userName}/Maildir/.Archive' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Deleted Items' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Drafts' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Sent' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Junk E-mail'"
-            # ProcessUtilities.executioner(command, 'vmail')
-            #
-            # command = f"chmod 700 '/home/vmail/{domain}/{userName}/Maildir/.Archive' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Deleted Items' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Drafts' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Sent' " \
-            #           f"'/home/vmail/{domain}/{userName}/Maildir/.Junk E-mail'"
-            # ProcessUtilities.executioner(command, 'vmail')
+            # Create standard IMAP folders
+            standard_folders = [
+                ".Archive",
+                ".Deleted Items", 
+                ".Drafts",
+                ".Sent",
+                ".Junk E-mail"
+            ]
+            
+            for folder in standard_folders:
+                folder_path = f"{maildir_path}/{folder}"
+                if not os.path.exists(folder_path):
+                    command = f"mkdir -p '{folder_path}/cur' '{folder_path}/new' '{folder_path}/tmp'"
+                    ProcessUtilities.executioner(command, 'vmail')
+            
+            # Set permissions for all folders
+            command = f"chmod -R 700 '{maildir_path}'"
+            ProcessUtilities.executioner(command, 'vmail')
+            
+            # Ensure final ownership
+            command = f"chown -R vmail:vmail '{maildir_base}'"
+            ProcessUtilities.executioner(command, 'root')
 
             #if not os.path.exists('/usr/local/lscp/cyberpanel/rainloop/data/_data_/_default_/plugins/mailbox-detect'):
             #    mailUtilities.InstallMailBoxFoldersPlugin()
@@ -378,20 +404,15 @@ class mailUtilities:
     @staticmethod
     def changeEmailPassword(email, newPassword, encrypt = None):
         try:
+            changePass = EUsers.objects.get(email=email)
             if encrypt == None:
-                CentOSPath = '/etc/redhat-release'
-                changePass = EUsers.objects.get(email=email)
-                if os.path.exists(CentOSPath):
-                    password = bcrypt.hashpw(newPassword.encode('utf-8'), bcrypt.gensalt())
-                    password = '{CRYPT}%s' % (password.decode())
-                    changePass.password = password
-                else:
-                    changePass.password = newPassword
-                changePass.save()
+                # Always use bcrypt hashing regardless of OS
+                password = bcrypt.hashpw(newPassword.encode('utf-8'), bcrypt.gensalt())
+                password = '{CRYPT}%s' % (password.decode())
+                changePass.password = password
             else:
-                changePass = EUsers.objects.get(email=email)
                 changePass.password = newPassword
-                changePass.save()
+            changePass.save()
             return 0,'None'
         except BaseException as msg:
             return 0, str(msg)
@@ -401,19 +422,13 @@ class mailUtilities:
         try:
             ## Generate DKIM Keys
 
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python3.6/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command)
-
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python3.8/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command)
-
-            command = 'chown cyberpanel:cyberpanel -R /usr/local/CyberCP/lib/python*/site-packages/tldextract/.suffix_cache'
-            ProcessUtilities.executioner(command, None, True)
 
             import tldextract
 
+            no_cache_extract = tldextract.TLDExtract(cache_dir=None)
+
             actualDomain = virtualHostName
-            extractDomain = tldextract.extract(virtualHostName)
+            extractDomain = no_cache_extract(virtualHostName)
             virtualHostName = extractDomain.domain + '.' + extractDomain.suffix
 
             if not os.path.exists("/etc/opendkim/keys/" + virtualHostName + "/default.txt"):
@@ -708,6 +723,70 @@ milter_default_action = accept
             writeToFile.writelines("Can not be installed.[404]\n")
             writeToFile.close()
             logging.CyberCPLogFileWriter.writeToFile(str(msg) + "[installSpamAssassin]")
+
+
+    @staticmethod
+    def SetupEmailLimits():
+        rlFile = '/etc/rspamd/override.d/ratelimit.conf'
+        rlContent = '''
+custom_keywords = "/etc/rspamd/custom_ratelimit.lua";
+'''
+        if not os.path.exists(rlFile):
+
+            WriteToFile = open(rlFile, 'w')
+            WriteToFile.write(rlContent)
+            WriteToFile.close()
+
+            rlLUA = '/etc/rspamd/custom_ratelimit.lua'
+            rlLUAContent = '''
+local custom_keywords = {}
+local d = {}
+
+-- create map
+d['badusers'] = rspamd_config:add_map({
+  ['url']= '/etc/rspamd/badusers.map',
+  ['type'] = 'map',
+  ['description'] = 'Bad users'
+})
+
+custom_keywords.customrl = function(task)
+  local rspamd_logger = require "rspamd_logger"
+  -- get authenticated user
+  local user = task:get_user()
+  -- define a default ratelimit
+  local default_rl = "10 / 1m"
+  if not user then return end -- no user, return nil
+  local user_rl = d['badusers']:get_key(user)
+  if user_rl then
+    local limit, duration, unit = string.match(user_rl, "(%d+)%s-/%s-(%d+)(%a*)")
+    if limit and duration then
+      duration = tonumber(duration)
+      if unit == 'm' then
+        duration = duration * 60 -- convert minutes to seconds
+      elseif unit == 'h' then
+        duration = duration * 3600 -- convert hours to seconds
+      elseif unit == 'd' then
+        duration = duration * 86400 -- convert days to seconds
+      end
+      local custom_rl = limit .. " / " .. duration .. "s"
+      rspamd_logger.infox(rspamd_config, "User %s has custom ratelimit: %s", user, custom_rl)
+      return "rs_customrl_" .. user, custom_rl
+    else
+      rspamd_logger.errx(rspamd_config, "Invalid ratelimit format for user %s, using default: %s", user, default_rl)
+      return "rs_customrl_" .. user, default_rl
+    end
+  else
+    rspamd_logger.infox(rspamd_config, "User %s not found in bad users map, using default ratelimit: %s", user, default_rl)
+    return "rs_customrl_" .. user, default_rl
+  end
+end
+
+return custom_keywords
+'''
+
+            WriteToFile = open(rlLUA, 'w')
+            WriteToFile.write(rlLUAContent)
+            WriteToFile.close()
 
 
     @staticmethod
@@ -1532,12 +1611,92 @@ LogFile /var/log/clamav/clamav.log
     @staticmethod
     def reverse_dns_lookup(ip_address):
         try:
-            import socket
-            host_name, _, _ = socket.gethostbyaddr(ip_address)
-            return host_name
-        except socket.herror as e:
+            import requests
+
+            fetchURLs = requests.get('https://cyberpanel.net/dnsServers.txt')
+
+            if fetchURLs.status_code == 200:
+
+                urls = fetchURLs.json()['urls']
+
+                if os.path.exists(ProcessUtilities.debugPath):
+                    logging.CyberCPLogFileWriter.writeToFile(f'DNS urls {urls}.')
+
+                results = []
+
+                ###
+
+                for url in urls:
+                    try:
+                        response = requests.get(f'{url}/index.php?ip={ip_address}', timeout=5)
+
+                        if os.path.exists(ProcessUtilities.debugPath):
+                            logging.CyberCPLogFileWriter.writeToFile(f'url to call {ip_address} is {url}')
+
+                        if response.status_code == 200:
+                            data = response.json()
+
+                            if os.path.exists(ProcessUtilities.debugPath):
+                                logging.CyberCPLogFileWriter.writeToFile(f'response from dns system {str(data)}')
+
+                            if data['status'] == 1:
+                                results.append(data['results']['8.8.8.8'])
+                                results.append(data['results']['1.1.1.1'])
+                                results.append(data['results']['9.9.9.9'])
+                    except:
+                        pass
+
+                if os.path.exists(ProcessUtilities.debugPath):
+                    logging.CyberCPLogFileWriter.writeToFile(f'rDNS result of {ip_address} is {str(results)}')
+
+                ###
+
+                return results
+        except BaseException as e:
+            logging.CyberCPLogFileWriter.writeToFile(f'Error in fetch rDNS {str(msg)}')
             # Handle errors, e.g., if reverse DNS lookup fails
-            return None
+            return []
+
+    @staticmethod
+    def SaveEmailLimitsNew(tempPath):
+        try:
+            content = open(tempPath, 'r').read()
+            email = content.split(' ')[0]
+            path = '/etc/rspamd/badusers.map'
+
+            WriteCheck = 0
+
+            if os.path.exists(path):
+                data = open(path, 'r').readlines()
+
+                WriteToFile = open(path, 'w')
+                
+                for line in data:
+                    if line.find(email) > -1:
+                        WriteToFile.write(content)
+                        WriteCheck = 1
+                    else:
+                        WriteToFile.write(line)
+
+                if WriteCheck == 0:
+                    WriteToFile.write(content)
+
+                WriteToFile.close()
+
+            else:
+                WriteToFile = open(path, 'w')
+                WriteToFile.write(content)
+                WriteToFile.close()
+
+            command = 'systemctl restart rspamd'
+            ProcessUtilities.executioner(command)
+
+            print(f'1,None')
+
+        except BaseException as msg:
+            print(f'0,{str(msg)}')
+
+
 
     ####### Imported below functions from mailserver/mailservermanager, need to refactor later
 
@@ -1610,6 +1769,32 @@ class MailServerManagerUtils(multi.Thread):
             final_json = json.dumps(final_dic)
             return HttpResponse(final_json)
 
+
+    def FetchCloudLinuxAlmaVersionVersion(self):
+        if os.path.exists('/etc/os-release'):
+            data = open('/etc/os-release', 'r').read()
+            if (data.find('CloudLinux') > -1 or data.find('cloudlinux') > -1) and (
+                    data.find('8.9') > -1 or data.find('Anatoly Levchenko') > -1 or data.find('VERSION="8.') > -1):
+                return 'cl-89'
+            elif (data.find('CloudLinux') > -1 or data.find('cloudlinux') > -1) and (
+                    data.find('8.8') > -1 or data.find('Anatoly Filipchenko') > -1):
+                return 'cl-88'
+            elif (data.find('CloudLinux') > -1 or data.find('cloudlinux') > -1) and (
+                    data.find('9.4') > -1 or data.find('VERSION="9.') > -1):
+                return 'cl-88'
+            elif (data.find('AlmaLinux') > -1 or data.find('almalinux') > -1) and (
+                    data.find('8.9') > -1 or data.find('Midnight Oncilla') > -1 or data.find('VERSION="8.') > -1):
+                return 'al-88'
+            elif (data.find('AlmaLinux') > -1 or data.find('almalinux') > -1) and (
+                    data.find('8.7') > -1 or data.find('Stone Smilodon') > -1):
+                return 'al-87'
+            elif (data.find('AlmaLinux') > -1 or data.find('almalinux') > -1) and (
+                    data.find('9.4') > -1 or data.find('9.3') > -1 or data.find('Shamrock Pampas') > -1 or data.find(
+                    'Seafoam Ocelot') > -1 or data.find('VERSION="9.') > -1):
+                return 'al-93'
+        else:
+            return -1
+
     def install_postfix_dovecot(self):
         try:
 
@@ -1653,8 +1838,17 @@ class MailServerManagerUtils(multi.Thread):
                 command = 'yum install --enablerepo=gf-plus -y postfix3 postfix3-ldap postfix3-mysql postfix3-pcre'
             elif ProcessUtilities.decideDistro() == ProcessUtilities.cent8:
 
-                command = 'dnf --nogpg install -y https://mirror.ghettoforge.org/distributions/gf/gf-release-latest.gf.el8.noarch.rpm'
-                ProcessUtilities.executioner(command)
+                clAPVersion = self.FetchCloudLinuxAlmaVersionVersion()
+                type = clAPVersion.split('-')[0]
+                version = int(clAPVersion.split('-')[1])
+
+                if type == 'al' and version >= 90:
+                    command = 'dnf --nogpg install -y https://mirror.ghettoforge.org/distributions/gf/gf-release-latest.gf.el9.noarch.rpm'
+                    ProcessUtilities.executioner(command)
+
+                else:
+                    command = 'dnf --nogpg install -y https://mirror.ghettoforge.org/distributions/gf/gf-release-latest.gf.el8.noarch.rpm'
+                    ProcessUtilities.executioner(command)
 
                 command = 'dnf install --enablerepo=gf-plus postfix3 postfix3-mysql -y'
             else:
@@ -2399,6 +2593,27 @@ class MailServerManagerUtils(multi.Thread):
             command = 'touch /home/cyberpanel/postfix'
             ProcessUtilities.executioner(command)
 
+            ###
+
+            etcResolve = '/etc/resolv.conf'
+
+            if os.path.exists(etcResolve):
+                dataEtcResolv = open(etcResolve, 'r').read()
+            else:
+                dataEtcResolv = ''
+
+
+            if len(dataEtcResolv) < 4:
+                writeToFile = open(etcResolve, 'w')
+                writeToFile.write('nameserver 8.8.8.8\n')
+                writeToFile.close()
+
+                command = 'systemctl restart postfix'
+                ProcessUtilities.executioner(command)
+
+                command = 'systemctl restart dovecot'
+                ProcessUtilities.executioner(command)
+
             logging.CyberCPLogFileWriter.statusWriter(self.extraArgs['tempStatusPath'], 'Completed [200].')
 
         except BaseException as msg:
@@ -2547,6 +2762,10 @@ def main():
         extraArgs = {'tempStatusPath': args.tempStatusPath}
         background = MailServerManagerUtils(None, 'ResetEmailConfigurations', extraArgs)
         background.ResetEmailConfigurations()
+    elif args.function == 'SetupEmailLimits':
+        mailUtilities.SetupEmailLimits()
+    elif args.function == 'SaveEmailLimitsNew':
+        mailUtilities.SaveEmailLimitsNew(args.tempConfigPath)
 
 if __name__ == "__main__":
     main()

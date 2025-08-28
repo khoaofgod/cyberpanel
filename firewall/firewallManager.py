@@ -1313,6 +1313,7 @@ class FirewallManager:
             userID = self.request.session['userID']
             currentACL = ACLManager.loadedACL(userID)
 
+
             if currentACL['admin'] == 1:
                 pass
             else:

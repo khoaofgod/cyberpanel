@@ -11,11 +11,10 @@ https://docs.djangoproject.com/en/1.11/ref/settings/
 """
 
 import os
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.11/howto/deployment/checklist/
@@ -24,7 +23,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = 'xr%j*p!*$0d%(-(e%@-*hyoz4$f%y77coq0u)6pwmjg4)q&19f'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ['*']
 
@@ -38,6 +37,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'baseTemplate',
+    'firewall',
     'loginSystem',
     'packages',
     'websiteFunctions',
@@ -49,7 +49,6 @@ INSTALLED_APPS = [
     'databases',
     'mailServer',
     'serverLogs',
-    'firewall',
     'backup',
     'managePHP',
     'manageSSL',
@@ -66,7 +65,8 @@ INSTALLED_APPS = [
     'containerization',
     'CLManager',
     'IncBackups',
-#    'WebTerminal'
+    'aiScanner',
+    #    'WebTerminal'
 ]
 
 MIDDLEWARE = [
@@ -83,7 +83,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'CyberCP.urls'
 
-
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -96,6 +95,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'baseTemplate.context_processors.version_context',
             ],
         },
     },
@@ -103,29 +103,28 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'CyberCP.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/1.11/ref/settings/#databases
+
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'cyberpanel',
         'USER': 'cyberpanel',
-        'PASSWORD': 'VY7ZbcQREu6mSC',
+        'PASSWORD': 'SLTUIUxqhulwsh',
         'HOST': 'localhost',
-        'PORT': ''
+        'PORT':''
     },
     'rootdb': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'mysql',
         'USER': 'root',
-        'PASSWORD': 'VY7ZbcQREu6mSC',
+        'PASSWORD': 'SLTUIUxqhulwsh',
         'HOST': 'localhost',
         'PORT': '',
     },
 }
-
 DATABASE_ROUTERS = ['backup.backupRouter.backupRouter']
 
 # Password validation
@@ -145,7 +144,6 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
-
 
 # Internationalization
 # https://docs.djangoproject.com/en/1.11/topics/i18n/
@@ -193,4 +191,7 @@ LANGUAGES = (
 
 MEDIA_URL = '/usr/local/CyberCP/tmp/'
 MEDIA_ROOT = MEDIA_URL
-DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
+DATA_UPLOAD_MAX_MEMORY_SIZE = 2147483648
+
+# Security settings for CSF compliance
+X_FRAME_OPTIONS = 'SAMEORIGIN'

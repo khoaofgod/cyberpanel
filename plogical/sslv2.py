@@ -339,10 +339,11 @@ class sslUtilities:
             import tldextract
 
             RetStatus, SAVED_CF_Key, SAVED_CF_Email = ACLManager.FetchCloudFlareAPIKeyFromAcme()
+            no_cache_extract = tldextract.TLDExtract(cache_dir=None)
 
             if RetStatus:
 
-                extractDomain = tldextract.extract(virtualHostName)
+                extractDomain = no_cache_extract(virtualHostName)
                 topLevelDomain = extractDomain.domain + '.' + extractDomain.suffix
                 logging.CyberCPLogFileWriter.writeToFile(f'top level domain in cf: {topLevelDomain}')
                 import CloudFlare
@@ -360,6 +361,8 @@ class sslUtilities:
                     if zone['name'] == topLevelDomain:
                         if zone['status'] == 'active':
                             return 1, None
+                        else:
+                            logging.CyberCPLogFileWriter.writeToFile(f'zone is not active in cf: {zone["name"]}')
 
                 return 0, 'Zone not found in Cloudflare'
 
@@ -375,7 +378,8 @@ class sslUtilities:
 
             from plogical.dnsUtilities import DNS
             from dns.models import Domains
-            extractDomain = tldextract.extract(virtualHostName)
+            no_cache_extract = tldextract.TLDExtract(cache_dir=None)
+            extractDomain = no_cache_extract(virtualHostName)
             topLevelDomain = extractDomain.domain + '.' + extractDomain.suffix
             zone = Domains.objects.get(name=topLevelDomain)
 
@@ -384,6 +388,8 @@ class sslUtilities:
             time.sleep(2)
 
             result = socket.getaddrinfo(f'cptest.{topLevelDomain}', None, socket.AF_INET)[0]
+
+            logging.CyberCPLogFileWriter.writeToFile(f'PDNS Result: {str(result)}.')
 
             # Return the IP address as a string
             if result[4][0] == ACLManager.GetServerIP():
@@ -424,7 +430,7 @@ class sslUtilities:
             CyberPanel_Check, message = sslUtilities.FindIfDomainInPowerDNS(virtualHostName)
 
             if CyberPanel_Check:
-                DNS_TO_USE = 'dns_pdns'
+                DNS_TO_USE = 'dns_cyberpanel'
             else:
                 return 0, 'Domain is not active in any of the configured DNS provider.'
 

@@ -69,6 +69,26 @@
                                                 </div>
                                             </div>
 
+                                            <div ng-hide="installationDetailsForm" class="form-group">
+                                                <p style="margin: 1%" class="text-center"><a
+                                                        href="https://rclone.org/drive/#making-your-own-client-id">Learn
+                                                    how to create this.</a>. These field can be left empty but backups
+                                                    may not work then. </p>
+                                                <label class="col-sm-3 control-label">{% trans "client_id" %}</label>
+                                                <div class="col-sm-6">
+                                                    <input name="client_id" type="text" class="form-control"
+                                                           ng-model="client_id">
+                                                </div>
+                                            </div>
+
+                                            <div ng-hide="installationDetailsForm" class="form-group">
+                                                <label class="col-sm-3 control-label">{% trans "client_secret" %}</label>
+                                                <div class="col-sm-6">
+                                                    <input name="client_secret" type="text" class="form-control"
+                                                           ng-model="client_secret">
+                                                </div>
+                                            </div>
+
                                         </form>
 
                                     </div>
@@ -175,8 +195,8 @@
         </style>
         <div class="container">
             <div id="page-title" align="center">
-                <h1 style="color: black"><strong>Backups v2 - Incremental Backups! </strong></h1>
-                <p style="font-size: 15px; color: black; margin-top: 1%">Is your website's data protection strategy up
+                <h1 style="color: var(--text-primary, black)"><strong>Backups v2 - Incremental Backups! </strong></h1>
+                <p style="font-size: 15px; color: var(--text-primary, black); margin-top: 1%">Is your website's data protection strategy up
                     to par? Are you tired of dealing with slow and unreliable backup solutions that don't offer the
                     level of robustness you need? <br><br>
 
@@ -202,14 +222,8 @@
                         allowfullscreen></iframe>
             </p>
             <div style="margin-top: 2%">
-                <stripe-pricing-table pricing-table-id="prctbl_1MQtdYJMfY1fWGMszc4tx78j"
-                                      publishable-key="pk_live_51ITXBmJMfY1fWGMs2G0LAydJweIDMp2WaYocM0xyzdn03WaHUbMw6uxfVuktAkgpRyUql7tz7gF5OwdccEZLd6Ot00XX6tGoZx">
-                </stripe-pricing-table>
-                <stripe-pricing-table pricing-table-id="prctbl_1LpSqSJMfY1fWGMsxSNhPLsc"
-                                      publishable-key="pk_live_51ITXBmJMfY1fWGMs2G0LAydJweIDMp2WaYocM0xyzdn03WaHUbMw6uxfVuktAkgpRyUql7tz7gF5OwdccEZLd6Ot00XX6tGoZx">
-                </stripe-pricing-table>
-                <stripe-pricing-table pricing-table-id="prctbl_1M6WpCJMfY1fWGMsQXFlZWcW"
-                                      publishable-key="pk_live_51ITXBmJMfY1fWGMs2G0LAydJweIDMp2WaYocM0xyzdn03WaHUbMw6uxfVuktAkgpRyUql7tz7gF5OwdccEZLd6Ot00XX6tGoZx">
+                <stripe-pricing-table pricing-table-id="prctbl_1PhTRPRs6rG0dTDlJZMzTw0k"
+                                      publishable-key="pk_live_51PgodkRs6rG0dTDl3jCUgxjyjI983GmCdHjzuLfZIsssmDLgKgnXnwQghVCctKMNFIC5K4oMcviTFrHf1ytsYZGa00AGySiWlF">
                 </stripe-pricing-table>
             </div>
 

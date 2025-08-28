@@ -12,8 +12,10 @@ class ApacheController:
 
     if ProcessUtilities.decideDistro() == ProcessUtilities.centos or ProcessUtilities.decideDistro() == ProcessUtilities.cent8:
 
+
         serverRootPath = '/etc/httpd'
         configBasePath = '/etc/httpd/conf.d/'
+        phpBasepath = '/etc/opt/remi'
         php54Path = '/opt/remi/php54/root/etc/php-fpm.d/'
         php55Path = '/opt/remi/php55/root/etc/php-fpm.d/'
         php56Path = '/etc/opt/remi/php56/php-fpm.d/'
@@ -26,12 +28,17 @@ class ApacheController:
         php80Path = '/etc/opt/remi/php80/php-fpm.d/'
         php81Path = '/etc/opt/remi/php81/php-fpm.d/'
         php82Path = '/etc/opt/remi/php82/php-fpm.d/'
+        php83Path = '/etc/opt/remi/php83/php-fpm.d/'
+        php84Path = '/etc/opt/remi/php84/php-fpm.d/'
+        php85Path = '/etc/opt/remi/php85/php-fpm.d/'
 
         serviceName = 'httpd'
 
     else:
         serverRootPath = '/etc/apache2'
         configBasePath = '/etc/apache2/sites-enabled/'
+
+        phpBasepath = '/etc/php'
 
         php54Path = '/etc/php/5.4/fpm/pool.d/'
         php55Path = '/etc/php/5.5/fpm/pool.d/'
@@ -45,6 +52,10 @@ class ApacheController:
         php80Path = '/etc/php/8.0/fpm/pool.d/'
         php81Path = '/etc/php/8.1/fpm/pool.d/'
         php82Path = '/etc/php/8.2/fpm/pool.d/'
+
+        php83Path = '/etc/php/8.3/fpm/pool.d/'
+        php84Path = '/etc/php/8.4/fpm/pool.d/'
+        php85Path = '/etc/php/8.5/fpm/pool.d/'
 
         serviceName = 'apache2'
 
@@ -252,8 +263,10 @@ LoadModule mpm_event_module modules/mod_mpm_event.so
         # Version 5.4
 
         if ProcessUtilities.decideDistro() == ProcessUtilities.centos or ProcessUtilities.decideDistro() == ProcessUtilities.cent8:
-
-            command = 'yum install -y https://rpms.remirepo.net/enterprise/remi-release-8.rpm'
+            if ProcessUtilities.alma9check == 1:
+                command = 'yum install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm'
+            else:
+                command = 'yum install -y https://rpms.remirepo.net/enterprise/remi-release-8.rpm'
             ApacheController.executioner(command)
 
             command = "yum install -y php?? php??-php-fpm  php??-php-mysql php??-php-curl php??-php-gd php??-php-mbstring php??-php-xml php??-php-zip php??-php-intl"
